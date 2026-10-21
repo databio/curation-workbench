@@ -1,8 +1,7 @@
-"""Local curation daemon: lets a review page write decisions to the working tree.
+"""Local curation daemon: serves the review UI and writes decisions to the working tree.
 
 Stdlib `http.server`, bound to a loopback address only (it refuses to start on
 anything else; there is no auth and there must never be a reason for any).
-A published, static site probes `/api/health`, fails, and renders read-only.
 
 Endpoints
 ---------
@@ -11,10 +10,6 @@ Endpoints
   POST   /api/decisions           create; mints DEC-NNNN              -> 201
   PUT    /api/decisions/<id>      replace a pending record
   DELETE /api/decisions/<id>      withdraw (status: withdrawn; never removed)
-  GET    /api/subjects            subjects.json (from the cached snapshot bundle)
-  GET    /api/status              status.json, derived now from the cached bundle and
-                                  the current decisions (snapshot.py + derive.py)
-  GET    /api/review_types        review_types.yaml as JSON (404 if the project has none)
   POST   /api/apply               run `cwb apply` (streams its output)
   GET    /api/apply               the last run's log: {running, dry_run, log, exit}
 
@@ -55,8 +50,8 @@ the file changed since, the daemon answers 409 with the current store.
 
 The server sets `decided_by` (git config user.name), `decided_on`,
 `schema_fingerprint`, `status: pending` and `origin: local`; the browser
-cannot supply them. Allowed browser origins: option `allowed_origins`
-(default http://localhost:4321-4329 and the 127.0.0.1 equivalents).
+cannot supply them. The only browser client is the review UI on this same
+origin: a request whose `Origin` is anything else is refused (no CORS).
 """
 import contextlib
 import datetime
@@ -71,16 +66,13 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-import yaml
 
 from . import apply as apply_mod
 from . import derive, review, snapshot, store, views
-from . import status as status_mod
 from . import subjects as subjects_mod
 from .store.yaml_store import LOCK
 
 SERVER_FIELDS = ("id", "decided_by", "decided_on", "schema_fingerprint", "status", "applied", "origin")
-DEFAULT_ORIGINS = [f"http://{h}:{p}" for h in ("localhost", "127.0.0.1") for p in range(4321, 4330)]
 DEFAULT_UI = Path(__file__).resolve().parent / "web"
 
 
@@ -97,7 +89,6 @@ def make_handler(wb, decided_by, ui_dir=None):
     ui = Path(ui_dir).resolve() if ui_dir else None
     if ui is not None and not (ui / "index.html").is_file():
         ui = None
-    origins = set(wb.option("allowed_origins", DEFAULT_ORIGINS))
 
     def git(*args):
         out = subprocess.run(["git", "-C", str(cfg.root), *args], capture_output=True, text=True)
@@ -154,17 +145,9 @@ def make_handler(wb, decided_by, ui_dir=None):
         def log_message(self, fmt, *args):
             sys.stderr.write(f"[cwb] {self.command} {self.path} {fmt % args}\n")
 
-        def _cors(self):
-            origin = self.headers.get("Origin")
-            if origin in origins:
-                self.send_header("Access-Control-Allow-Origin", origin)
-                self.send_header("Vary", "Origin")
-                self.send_header("Access-Control-Expose-Headers", "X-Store-Mtime")
-
         def send(self, code, body, ctype="application/json", cache=None):
             data = body if isinstance(body, bytes) else json.dumps(body, indent=1).encode()
             self.send_response(code)
-            self._cors()
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(data)))
             if cache:
@@ -195,9 +178,9 @@ def make_handler(wb, decided_by, ui_dir=None):
                 return False
             origin = self.headers.get("Origin")
             # The review UI is served from this port, so its own origin (the
-            # loopback Host it was loaded from) is always allowed: browsers
-            # send Origin on module scripts and on every non-GET fetch.
-            if origin and origin not in origins and origin != f"http://{self.headers.get('Host')}":
+            # loopback Host it was loaded from) is the only one allowed:
+            # browsers send Origin on module scripts and on every non-GET fetch.
+            if origin and origin != f"http://{self.headers.get('Host')}":
                 self.error(403, [f"origin {origin} not allowed"])
                 return False
             return True
@@ -230,14 +213,6 @@ def make_handler(wb, decided_by, ui_dir=None):
 
         # -------------------------------------------------------- verbs
 
-        def do_OPTIONS(self):
-            self.send_response(204)
-            self._cors()
-            self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-            self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Store-Mtime")
-            self.send_header("Access-Control-Max-Age", "600")
-            self.end_headers()
-
         def do_GET(self):
             path = urlparse(self.path).path
             if ui is not None and not (path == "/api" or path.startswith("/api/")):
@@ -259,11 +234,6 @@ def make_handler(wb, decided_by, ui_dir=None):
                 ("/api/pending", self.pending),
                 ("/api/health", self.health),
                 ("/api/decisions", lambda _: self.send(200, self._store_json())),
-                ("/api/subjects", lambda _: self.send(
-                    200, subjects_mod.dump_json(bundle()["subjects"]).encode())),
-                ("/api/status", lambda _: self.send(200, status_mod.dump(
-                    derive.status(bundle(), wb.store.records())).encode())),
-                ("/api/review_types", self.review_types),
                 ("/api/apply", lambda _: self.send(200, Api.last_apply)),
             ])
 
@@ -354,11 +324,6 @@ def make_handler(wb, decided_by, ui_dir=None):
                 "apply_available": True,
             })
 
-        def review_types(self, _):
-            if not cfg.review_types.exists():
-                return self.error(404, [f"{cfg.rel(cfg.review_types)} does not exist"])
-            self.send(200, yaml.safe_load(cfg.review_types.read_text()))
-
         def _client_record(self):
             body = self.json_body()
             body.pop("mtime_ns", None)
@@ -400,7 +365,6 @@ def make_handler(wb, decided_by, ui_dir=None):
             run = Api.last_apply = {"running": True, "dry_run": bool(body.get("dry_run")),
                                     "log": [], "exit": None}
             self.send_response(200)
-            self._cors()
             self.send_header("Content-Type", "text/plain; charset=utf-8")
             self.send_header("Connection", "close")
             self.end_headers()

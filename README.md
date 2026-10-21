@@ -17,7 +17,7 @@ hosted, multi-user mode keeps people, teams, votes and hosted decisions in
 Postgres; see [Hosted mode](#hosted-mode) and [Storage](#storage).
 
 It was extracted from ONGA (Ontology of Genomic Annotations), which is its
-first project; see `adapters/onga/`.
+first project; see [Residents](#residents).
 
 ## Install
 
@@ -193,7 +193,6 @@ options:                    # read by generic rules and signals
   examples_dir: examples             # instance examples rewritten on rename
   apply_rank: {}                     # extra verdict ordering for apply
   layer_range: [1, 4]
-  allowed_origins: [...]             # daemon CORS; default localhost:4321-4329
 apply:                      # optional; defaults: snapshot schema/curation/mappings,
   snapshot: [...]           # no extra commands, regen in-process
   after_write: ["{python} scripts/project_specific_step.py"]
@@ -355,25 +354,23 @@ editing the owning file and recreating the dev database; after it, only add file
 | `040-049` | sync worker | `040_residents_sync.sql` (residents, plugin approvals, snapshots, derived status, sync jobs, stale events) |
 | `090-099` | hosted service | snapgate upgrades |
 
-## The ONGA reproduction
+## Residents
 
-`adapters/onga/` holds ONGA's `workbench.yaml`, its plugin (embeddings
-findings, ENCODE usage, upstream SO requests, facet decomposition, SO
-element-type rules, site-protected names, the proposals route, and the review
-UI hooks: mapping suggestions, browse links, usage and upstream panels, review
-prompts) and its `review_types.yaml` (version 2, with ONGA's wording). The tests reproduce ONGA's own outputs:
+ONGA is the first project that uses this package. Its configuration lives in
+the ONGA repo (`github.com/databio/onga`): `workbench.yaml` at the repo root,
+its plugin `curation/plugin/onga_plugin.py` (embeddings findings, ENCODE usage,
+upstream SO requests, facet decomposition, SO element-type rules,
+site-protected names, the proposals route, and the review UI hooks) with its
+helper `curation/plugin/onga_mappings.py`, and `curation/review_types.yaml`.
+ONGA depends on this repo as a path dependency (`../curation-workbench`), and
+its `make test` is the guard: its committed outputs are the golden files.
+
+`tests/test_onga.py` runs the same `--check`s from here, plus the daemon's read
+routes and an apply dry run on a disposable worktree:
 
 ```bash
-# read-only checks (subjects, store, lint) against an ONGA checkout:
-ONGA_ROOT=../onga pytest -q
-# full set, including status, apply and the daemon, needs a disposable worktree:
+ONGA_ROOT=../onga pytest -q tests/test_onga.py                 # read-only
 git -C ../onga worktree add --detach ~/work/cwb-onga HEAD
+ln -s "$(realpath ../onga)/embeddings/data" ~/work/cwb-onga/embeddings/data
 ONGA_ROOT=~/work/cwb-onga ONGA_SCRATCH=~/work/cwb-onga pytest -q
 ```
-
-`tests/test_onga_review_items.py` compares every review item with the ONGA
-site's own `itemsFor()` (run with `npx tsx`); it needs ONGA's uncommitted
-`site/src/lib/review-types.ts` (and the files it imports) copied into the
-worktree, and `site/node_modules` (a symlink to the main checkout's works).
-
-See STATUS.md for what matches and what differs.

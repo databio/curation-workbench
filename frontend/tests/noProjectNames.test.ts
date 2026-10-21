@@ -6,7 +6,9 @@ import { join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const SRC = join(__dirname, '..', 'src');
-const ADAPTER = join(__dirname, '..', '..', 'adapters', 'onga', 'review_types.yaml');
+// ONGA's review types, in ONGA's checkout (ONGA_ROOT, default ../onga next to this repo).
+const ONGA_ROOT = process.env.ONGA_ROOT ?? join(__dirname, '..', '..', '..', 'onga');
+const ADAPTER = join(ONGA_ROOT, 'curation', 'review_types.yaml');
 
 function files(dir: string): string[] {
   return readdirSync(dir).flatMap((name) => {
@@ -16,7 +18,7 @@ function files(dir: string): string[] {
   });
 }
 
-/** Rule ids named in the ONGA adapter's review types (skipped when it is not reachable). */
+/** Rule ids named in ONGA's review types (skipped when they are not reachable). */
 function ruleIds(): string[] {
   if (!existsSync(ADAPTER)) return [];
   const text = readFileSync(ADAPTER, 'utf8');

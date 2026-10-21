@@ -1,9 +1,9 @@
 # Status (2026-10-21)
 
-Rebuild of ONGA's curation workbench as a standalone package, with ONGA as a
-configured project (`adapters/onga/`). Each stage is checked against ONGA's own
-code and outputs (`tests/`, 11 ONGA and toy tests, ~2 min). Nothing in the ONGA repo was
-changed.
+Rebuild of ONGA's curation workbench as a standalone package. Each stage below
+was checked against ONGA's own code and outputs by reproduction tests; their
+final run was against ONGA `6b38215` (2026-10-21), after which ONGA switched
+onto this package and those tests were retired (see "ONGA switchover").
 
 | Stage | What | Reproduces ONGA? |
 |---|---|---|
@@ -34,8 +34,8 @@ as before). Hosted mode adds resident projects (`cw_residents`, migration
 per commit in an isolated runner (`cwb runner`, plugins only from a
 superadmin-approved git tree), publishes it to Postgres with the derived
 status/review, and marks votes and pending hosted decisions stale when their
-subject changed. ONGA through the hosted path (git archive of its tree, the
-adapter laid out as plan 6 puts it in ONGA, runner in a child process)
+subject changed. ONGA through the hosted path (its tree as the worker sends
+it, plugin_dir `curation/plugin`, runner in a child process)
 derives the same status.json and review.json as `cwb regen`
 (`tests/test_onga_hosted.py`). Not yet exercised: the runner inside Docker
 with Swarm isolation (`cwb hosted isolation-check` there), a real GitHub
@@ -66,9 +66,30 @@ runner 87 MiB). Not yet done (Nathan): the go-live steps in `deployment/deploy.m
   an SSSOM row for the same object as a CURIE (option `iri_prefixes`), as the
   ONGA site's TypeScript did. status.json keeps ONGA's exact (raw) comparison.
 
+## ONGA switchover (2026-10-21)
+
+ONGA now uses this package: its `workbench.yaml` (repo root), plugin
+(`curation/plugin/onga_plugin.py` + `onga_mappings.py`) and
+`curation/review_types.yaml` live in the ONGA repo; `adapters/` is gone. ONGA's
+own engine (`scripts/workbench/` and five scripts) is deleted and its Makefile
+calls `cwb`; `make curate` runs `cwb serve` (the review UI), and ONGA's Astro
+queue, pending and log pages are gone (its develop pages are read-only). After
+the switch ONGA regenerates byte-identical files apart from `_generated_by`
+(plus the new `curation/review.json`), and its `make test` is the guard.
+`tests/test_onga.py` runs the `--check`s, the daemon's read routes and an
+apply dry run against an ONGA tree. The daemon's CORS support is removed (its
+only client is the same-origin review UI), as are the `/api/subjects`,
+`/api/status` and `/api/review_types` routes the old ONGA pages used.
+
+Final reproduction run (ONGA `6b38215`, before the switch): all stage tests
+passed, and every review item equalled the ONGA site's `itemsFor()` once the
+worktree's site data was rebuilt; the only failure was the hard-coded review
+counts, which predated two keep decisions.
+
 ## Where ONGA-specific code went
 
-All of it is in `adapters/onga/onga_plugin.py`: legacy reference forms,
+All of it is in ONGA's `curation/plugin/onga_plugin.py` (helpers in
+`onga_mappings.py`): legacy reference forms,
 embeddings findings, ENCODE usage, upstream SO requests (signal, label
 references, the PATCH /api/proposals route), facet decomposition (lint rules,
 label references, the `facet` handler), scope delegations, SO element-type
@@ -83,17 +104,8 @@ annotation, id scheme, examples dir) are now options in `workbench.yaml`.
 - Review UI (2026-10-21): a React app in `frontend/`, served by `cwb serve`
   (Review / Apply / More, type pages with one-click answers, subject page with
   the full decision form, apply with dry run). Items are built in Python
-  (`answers.py`, review.json version 2); every item equals the ONGA site's
-  `itemsFor()` on all 10 review types (`tests/test_onga_review_items.py`).
-  The hosted backend (`frontend/src/api/hosted.ts`) talks to the hosted
-  service below. Still to do, with Nathan's go-ahead: cut ONGA over (delete
-  its Astro queue pages, `make curate` runs `cwb serve`), then drop the
-  daemon's CORS support.
-- Point ONGA at this package (plan 6): move `adapters/onga/` into the ONGA repo
-  (`workbench.yaml` at the root with `plugin_dir: curation/plugin`, the plugin
-  in `curation/plugin/`, review types in `curation/review_types.yaml`), replace
-  its scripts/workbench and the five scripts with `cwb`, and switch its Makefile.
-  Then register ONGA as the first resident (dev-docs/sync.md).
+  (`answers.py`, review.json version 2). ONGA uses it via `make curate`.
+- Register ONGA as the first resident (dev-docs/sync.md).
 - Hosted service (2026-10-21): `cwb hosted serve`, a FastAPI app with
   Prosopia sign-in through vendored snapgate 5.1.0, invite-only accounts
   (pending until a superadmin approves), per-project teams (voter, curator),
@@ -107,5 +119,5 @@ annotation, id scheme, examples dir) are now options in `workbench.yaml`.
   deployment at curate.databio.org (plan 5) and the Prosopia `curate` client.
 - (Done earlier: votes and hosted decisions in Postgres; the sync worker,
   runner and resident projects.)
-- ONGA's `curation/verdicts.yaml` cannot be read by PyYAML (a flow map at line
-  255 uses `?`); ruamel reads it. Harmless today, but worth fixing in ONGA.
+- (Done: ONGA's `curation/verdicts.yaml` is readable by PyYAML; the three
+  flow-map values ending in `?` are quoted.)

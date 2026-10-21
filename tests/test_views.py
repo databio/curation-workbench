@@ -107,12 +107,26 @@ def test_spa_fallback(daemon):
     assert call("/../../etc/passwd", accept="*/*")[0] == 404
 
 
-def test_old_routes_unchanged(daemon):
-    wb = daemon
+def test_store_routes(daemon):
     assert get("/api/health")["project"] == "toy"
-    assert json.loads(call("/api/subjects")[2]) == snapshot.build(wb)["subjects"]
     assert get("/api/decisions")["decisions"] == []
-    assert get("/api/review_types")["version"] == 2
+    for gone in ("/api/subjects", "/api/status", "/api/review_types"):
+        assert call(gone)[0] == 404, gone
+
+
+def test_foreign_origin_refused(daemon):
+    """No CORS: the review UI is same-origin, so any other Origin is refused."""
+    req = urllib.request.Request(f"http://127.0.0.1:{PORT}/api/decisions", method="GET")
+    req.add_header("Origin", "http://localhost:4321")
+    try:
+        urllib.request.urlopen(req)
+        raise AssertionError("foreign origin was served")
+    except urllib.error.HTTPError as e:
+        assert e.code == 403 and "Access-Control-Allow-Origin" not in e.headers
+    req = urllib.request.Request(f"http://127.0.0.1:{PORT}/api/decisions", method="GET")
+    req.add_header("Origin", f"http://127.0.0.1:{PORT}")
+    with urllib.request.urlopen(req) as r:
+        assert r.status == 200 and "Access-Control-Allow-Origin" not in r.headers
 
 
 def test_no_ui_serves_api_only(tmp_path):

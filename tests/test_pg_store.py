@@ -8,7 +8,7 @@ import threading
 from pathlib import Path
 
 import pytest
-from conftest import ADAPTER, seed_users
+from conftest import seed_users
 from test_store_contract import draft, toy, toy_ctx  # noqa: F401  (toy is a fixture)
 
 sqlalchemy = pytest.importorskip("sqlalchemy")
@@ -374,7 +374,7 @@ def test_export_toy(project, ctx, toy, tmp_path):  # noqa: F811
 
 
 def test_export_onga(pg_engine, onga, tmp_path):
-    wb = Workbench.open(ADAPTER, root=onga)
+    wb = Workbench.open(onga / "workbench.yaml")
     template = tmp_path / "decisions.yaml"
     shutil.copy(onga / "curation" / "decisions.yaml", template)
     subj = store.Subjects.load(onga / "curation" / "subjects.json")

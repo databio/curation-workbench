@@ -1,6 +1,6 @@
 """Review tracks and types: the queue split into kinds of work.
 
-`review_types.yaml` version 2 (see adapters/onga/review_types.yaml) declares
+`review_types.yaml` version 2 (see ONGA's curation/review_types.yaml) declares
 tracks (by subject kind) and, inside each, types (by finding rule), plus the
 project's display `title`, plain-language `reasons` per finding rule, per
 `answers_kind` settings (`answers`) and extra menu links (`more_links`).
