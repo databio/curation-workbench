@@ -1,0 +1,5 @@
+# curie_map:
+#   toy: https://example.org/toy/
+#   ex: https://example.org/ex/
+subject_id	subject_label	predicate_id	object_id	object_label	mapping_justification	predicate_modifier	comment
+toy:TOY_0001	red	skos:exactMatch	ex:RED	red	semapv:UnspecifiedMatching		

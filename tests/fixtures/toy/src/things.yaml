@@ -1,0 +1,28 @@
+id: https://example.org/toy/things
+name: things
+imports:
+  - linkml:types
+classes:
+  Sample:
+    description: A thing that was measured.
+    slots:
+      - sample_id
+      - color
+slots:
+  sample_id:
+    description: Identifier of the sample.
+    identifier: true
+    required: true
+  color:
+    description: Its color.
+    range: Color
+    required: true
+enums:
+  Color:
+    description: Colors a sample can have.
+    permissible_values:
+      red:
+        description: The color of blood.
+        meaning: toy:TOY_0001
+      blue:
+        meaning: toy:TOY_0002

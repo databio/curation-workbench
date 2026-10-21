@@ -1,0 +1,19 @@
+[project]
+name = "curation-workbench"
+version = "0.1.0"
+description = "Decision-driven curation workbench for LinkML schemas and SSSOM mappings"
+requires-python = ">=3.10"
+dependencies = ["pyyaml>=6", "ruamel.yaml>=0.18"]
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+
+[project.scripts]
+cwb = "curation_workbench.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/curation_workbench"]

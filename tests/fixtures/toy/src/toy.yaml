@@ -1,0 +1,6 @@
+id: https://example.org/toy
+name: toy
+imports:
+  - linkml:types
+  - things
+default_range: string

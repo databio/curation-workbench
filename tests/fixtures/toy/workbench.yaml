@@ -1,0 +1,14 @@
+# A tiny project with no plugins: proves the generic path stands alone.
+project: toy
+root: .
+schema:
+  dir: src
+  root: toy.yaml
+terms:
+  prefix: toy
+  local: TOY_
+  digits: 4
+  base: https://example.org/toy/
+  ledger: curation/term_ids.tsv
+options:
+  adoption_root: class:Sample

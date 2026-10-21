@@ -1,0 +1,23 @@
+lint:
+  terse_description_chars: 15
+  todo_markers: ['\bTODO\b']
+  rules:
+    required-policy: {severity: warn, suggested_verdict: set_cardinality}
+    unreviewed-mapping: {severity: warn, suggested_verdict: adopt_mapping}
+    enum-value-no-description: {severity: warn, suggested_verdict: edit_description}
+    terse-description: {severity: info, suggested_verdict: edit_description}
+    slot-no-examples: {severity: info, suggested_verdict: set_examples}
+    no-mapping-at-all: {severity: info, suggested_verdict: adopt_mapping}
+    unused-slot: {severity: info, suggested_verdict: delete_slot}
+    unused-enum: {severity: info, suggested_verdict: delete_enum}
+    shared-slot: {severity: info, suggested_verdict: keep}
+    duplicate-description: {severity: info, suggested_verdict: edit_description}
+    todo-marker: {severity: warn, suggested_verdict: edit_description}
+queue:
+  findings: 0.5
+  impact: 2.0
+  adoption: 0.5
+  required: 0.5
+  stale: 3.0
+status:
+  severity_points: {error: 3, warn: 2, info: 1}

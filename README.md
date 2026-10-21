@@ -1,0 +1,133 @@
+# curation-workbench
+
+A decision-driven curation workbench for [LinkML](https://linkml.io/) schemas
+and [SSSOM](https://mapping-commons.github.io/sssom/) mappings.
+
+Every reviewable piece of a schema (term, enum, class, slot, slot usage,
+subset, module) gets a permanent subject id and a content hash. Curators record
+**decisions** about subjects (keep, rename, merge, adopt a mapping, set a
+field's cardinality, ...) in a plain YAML log. An **apply** step turns pending
+decisions into edits of the schema and mapping files, all or nothing, and
+stamps each decision as applied. Automatic **lint** findings and a ranked
+**queue** say what to look at next, and **review types** split that queue into
+kinds of work with one question each.
+
+Everything is plain files in git. There is no database.
+
+It was extracted from ONGA (Ontology of Genomic Annotations), which is its
+first project; see `adapters/onga/`.
+
+## Install
+
+```bash
+uv venv && uv pip install -e ".[test]"
+```
+
+## Commands
+
+```bash
+cwb -c workbench.yaml subjects [--check]   # subjects.json, term_crosswalk.json, subject_aliases.json
+cwb -c workbench.yaml lint [--check]       # findings/schema_lint.json
+cwb -c workbench.yaml status [--check]     # status.json: state + queue score per subject
+cwb -c workbench.yaml review [--check]     # review.json: queue sorted into review tracks/types
+cwb -c workbench.yaml regen [--check]      # all of the above, in order
+cwb -c workbench.yaml apply [--dry-run] [--ids DEC-0001 ...] [--emit pending.json]
+cwb -c workbench.yaml serve [--port 8781]  # local decision daemon (loopback only)
+```
+
+Global flags: `--root` (the project tree; overrides the config) and `--out`
+(where generated files go; default the curation dir).
+
+## A project
+
+```
+my-schema/
+  workbench.yaml
+  src/*.yaml                  LinkML modules (root module's imports = mint order)
+  mappings/*.sssom.tsv        SSSOM mappings, one file per object prefix
+  curation/
+    decisions.yaml            the decision log (version, next_id, decisions: [])
+    verdicts.yaml             which decisions exist, per subject kind, with field schemas
+    policy.yaml               lint thresholds/rules, queue weights, severities
+    term_ids.tsv              permanent term-id ledger
+    review_types.yaml         optional: review tracks and types
+```
+
+`tests/fixtures/toy/` is a complete minimal project with no plugins.
+
+### workbench.yaml
+
+```yaml
+project: myschema
+root: .
+schema: {dir: src, root: myschema.yaml, exclude: [], layer_annotation: null}
+terms:                      # permissible values carry `meaning: ms:MS_0000001`
+  prefix: ms
+  local: MS_
+  digits: 7
+  base: https://example.org/ms/
+  ledger: curation/term_ids.tsv
+mappings:
+  sssom: "mappings/*.sssom.tsv"
+  columns: {predicate: predicate_id, object: object_id, modifier: predicate_modifier,
+            justification: mapping_justification, comment: comment}
+curation: {dir: curation}
+review_types: null          # path relative to this file; default curation/review_types.yaml
+plugins: []                 # modules importable from this file's folder
+options:                    # read by generic rules and signals
+  adoption_root: class:File          # queue signal: reachable from this class
+  import_source_prefix: null         # classes whose `source:` starts with this are "ported"
+  machine_definitions: null          # YAML of machine-drafted descriptions
+  content_enums: null                # enums whose terms get mapping/usage lint rules
+  usage_label: uses                  # noun for term usage counts in messages
+  doc_link_prefix_suffix: null       # CURIE prefixes that point at web pages
+  examples_dir: examples             # instance examples rewritten on rename
+  apply_rank: {}                     # extra verdict ordering for apply
+  layer_range: [1, 4]
+  allowed_origins: [...]             # daemon CORS; default localhost:4321-4329
+apply:                      # optional; defaults: snapshot schema/curation/mappings,
+  snapshot: [...]           # no extra commands, regen in-process
+  after_write: ["{python} scripts/project_specific_step.py"]
+  regen: ["make regen"]     # replaces the in-process regen
+  verify: ["make test"]
+```
+
+## Plugin API
+
+A plugin is a module with `register(wb)`. Generic code never names a project;
+everything project-specific goes through these hooks:
+
+| Hook | Signature | Used by |
+|---|---|---|
+| `wb.legacy_forms` | `(tid, enum, label) -> [str]` | term crosswalk |
+| `wb.findings_sources` | `(wb, fingerprint, severity_of) -> (findings, sources)` | status, review |
+| `wb.signals[name]` | `(ctx) -> {sid: value}` (one per `queue:` weight) | status |
+| `wb.term_usage` | `(wb) -> {term sid: count}` | `impact` signal, usage lint rules |
+| `wb.lint_rules` | `(linter) -> None`, calls `linter.emit(rule, sids, msg)` | lint |
+| `wb.operation_checks` | `(verdict, op) -> [error]` | decision validation |
+| `wb.record_checks` | `(wb, rec) -> [error]` | decision validation |
+| `wb.handler(obj)` | handler with `kind`, `verdict`, `preflight`, `apply` | apply |
+| `wb.handler_check(kind, verdict, fn)` | `(handler, rec, ctx) -> [error]` | apply preflight |
+| `wb.ref_providers` | objects with `find` / `relabel` / `enum_renamed` | term rename/move/merge/delete |
+| `wb.mapping_checks` | `(op, negate, ctx) -> [error]` | SSSOM adopt/reject |
+| `wb.mapping_fill` | `(row, op, negate, table, ctx, new)` | SSSOM adopt/reject |
+| `wb.protected_names` | `(ctx, section) -> {name: reason}` | class/enum rename, move, delete |
+| `wb.routes` | `(method, prefix, fn(api, tail))` | daemon |
+| `wb.regen` | `(wb, out_dir)` | `cwb regen`, in-process apply regen |
+
+## The ONGA reproduction
+
+`adapters/onga/` holds ONGA's `workbench.yaml`, its plugin (embeddings
+findings, ENCODE usage, upstream SO requests, facet decomposition, SO
+element-type rules, site-protected names, the proposals route) and its
+`review_types.yaml`. The tests reproduce ONGA's own outputs:
+
+```bash
+# read-only checks (subjects, store, lint) against an ONGA checkout:
+ONGA_ROOT=../onga pytest -q
+# full set, including status, apply and the daemon, needs a disposable worktree:
+git -C ../onga worktree add --detach ~/work/cwb-onga HEAD
+ONGA_ROOT=~/work/cwb-onga ONGA_SCRATCH=~/work/cwb-onga pytest -q
+```
+
+See STATUS.md for what matches and what differs.

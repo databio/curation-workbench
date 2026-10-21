@@ -1,0 +1,44 @@
+# ONGA as a curation-workbench project. Points at an ONGA checkout by path;
+# override with the ONGA_ROOT env var (see tests/ and README).
+project: onga
+root: ../../../onga
+schema:
+  dir: src
+  root: onga.yaml
+  exclude: [linkml_lint_config.yaml]
+  layer_annotation: onga_layer
+terms:
+  prefix: onga
+  local: ONGA_
+  digits: 7
+  base: https://databio.org/onga/
+  ledger: curation/term_ids.tsv
+mappings:
+  sssom: "mappings/*.sssom.tsv"
+  columns:
+    predicate: predicate_id
+    object: object_id
+    modifier: predicate_modifier
+    justification: mapping_justification
+    fit: element_type_fit
+    comment: comment
+curation:
+  dir: curation
+review_types: review_types.yaml
+plugins: [onga_plugin]
+options:
+  content_enums: [DataType, FeatureType]
+  usage_label: ENCODE files
+  doc_link_prefix_suffix: _info
+  adoption_root: class:GenomicAnnotationFile
+  import_source_prefix: "https://w3id.org/fga-wg/"
+  machine_definitions: curation/machine_definitions.yaml
+  examples_dir: examples
+  iri_prefixes: {"http://edamontology.org/": edam}
+  apply_rank: {facet: 5}
+apply:
+  # Everything an apply (including `make regen`) may write.
+  snapshot: [src, mappings, curation, examples, proposals, DECISIONS.md, site/public/api]
+  after_write: ["{python} scripts/project_mappings.py"]
+  regen: ["make regen"]
+  verify: ["make test"]

@@ -1,0 +1,98 @@
+# Review tracks and types for ONGA: the queue split by what is being reviewed
+# (track), then by kind of work (type), one question each. Read by
+# `cwb review` (writes review.json) and served by the daemon at
+# /api/review_types. Ported from site/src/lib/review-types.ts.
+#
+# A queue item belongs to the track of its subject kind; inside it, to every
+# type whose `rules` match one of its open findings, or to the type with
+# `fallback: true` when none match. `answers_kind` names the answer builder a
+# review page uses for that type's buttons (links, definitions, duplicates,
+# structure, keep-or-cut, fields, signoff); `answers` is the short summary
+# shown on the type's card.
+
+version: 1
+
+tracks:
+  - id: vocabulary
+    title: Vocabulary
+    blurb: The words ONGA uses to say what is in a file (peaks, signal, methylation state...), and the lists they live in.
+    kinds: [term, subset, enum]
+    types:
+      - id: links
+        title: Links to other ontologies
+        question: Does this term match a term in another ontology (EDAM, SO, PATO, ...)?
+        answers: Accept a suggested link · Reject it · No match exists
+        help: Links let other tools understand ONGA terms. A matcher suggested candidates; some links were added earlier and never checked.
+        rules: [mapping-suggestion, no-mapping-at-all, unmapped-high-usage, unreviewed-mapping, coverage-gap]
+        answers_kind: links
+      - id: duplicates
+        title: Near-duplicates
+        question: Is this the same thing as another term, or two ideas glued together?
+        answers: Merge · Different things · Keep as one term
+        help: Pairs of terms that read almost the same, and compound terms that might split into parts.
+        rules: [similar-terms, residual-compound, inline-enum]
+        answers_kind: duplicates
+      - id: keep-or-cut
+        title: Keep or cut
+        question: Should this term exist at all?
+        answers: Keep · Delete
+        help: Terms no ENCODE file uses, and values nothing else refers to.
+        rules: [zero-usage-term, orphan-facet-value]
+        answers_kind: keep-or-cut
+      - id: definitions
+        title: Definitions
+        question: Is this definition clear and complete?
+        answers: Definition is fine · Rewrite it
+        help: Term definitions that are missing, very short, or carry a TODO note.
+        rules: [terse-description, enum-value-no-description, todo-marker]
+        answers_kind: definitions
+      - id: signoff
+        title: Sign-off
+        question: Nothing was flagged. Is this right as it is?
+        answers: Looks right · Needs work
+        help: Terms, subsets and enums with no known problems that nobody has looked at yet. Most need only a quick read.
+        rules: []
+        fallback: true
+        answers_kind: signoff
+
+  - id: schema
+    title: Schema
+    blurb: "The data model: record types (classes) like File, Sample and ReferenceGenome, and their fields. Mostly ported from FGA-WG."
+    kinds: [class, slot, usage, module]
+    types:
+      - id: fields
+        title: Required and examples
+        question: Should this field be required, and does it show what a value looks like?
+        answers: Required / recommended / optional · Add examples
+        help: Every required field is a cost to everyone adopting the schema, and fields without examples are hard to fill in.
+        rules: [required-policy, slot-no-examples]
+        answers_kind: fields
+      - id: definitions
+        title: Descriptions
+        question: Is this description clear and complete?
+        answers: Description is fine · Rewrite it
+        help: Field and class descriptions that are very short or carry a TODO note.
+        rules: [terse-description, todo-marker]
+        answers_kind: definitions
+      - id: links
+        title: Outside standards
+        question: Does this class line up with an outside standard (DCAT, PROV-O, Phenopackets, ...)?
+        answers: Remove a bad link · No match exists · add one on its page
+        help: Ported classes that point to no outside standard, or point to a web page instead of a term.
+        rules: [class-no-alignment, mapping-target-is-doc-link]
+        answers_kind: links
+      - id: structure
+        title: Shared fields
+        question: Does this field mean the same thing in every class that uses it?
+        answers: Fine as is · fix on its page
+        help: Fields listed by more than one class.
+        rules: [shared-slot]
+        answers_kind: structure
+      - id: signoff
+        title: Sign-off
+        question: Nothing was flagged. Is this right as it is?
+        answers: Looks right · Needs work
+        help: Classes, fields and modules with no known problems that nobody has looked at yet. Most need only a quick read.
+        rules: []
+        fallback: true
+        answers_kind: signoff
