@@ -15,8 +15,21 @@ inputs. `records` is the decision list: `wb.store.records()` locally,
   history(records, bundle)                     GET /api/history
   pending_view(records, effects=, errors=, files=)  GET /api/pending
 """
+from . import answers
 from . import findings as findings_mod
 from .status import resolve
+
+
+def _with_text(found, bundle, sid=None):
+    """Each finding plus `text`, the plain words the review rows show for it
+    (review_types.yaml `reasons`), or its raw message when the rule has none
+    or hides it."""
+    ctx = answers.Ctx(bundle)
+    out = []
+    for f in found:
+        who = sid or next(iter(f.get("subjects") or []), None)
+        out.append({**f, "text": answers.reason(f, who, ctx) or f["message"]})
+    return out
 
 
 def _aliases(bundle):
@@ -96,7 +109,7 @@ def subject_view(bundle, status, records, sid):
         "status": {"state": row.get("state", "unreviewed"), "score": row.get("score", 0),
                    "open_findings": row.get("open_findings") or [],
                    "latest": row.get("latest")},
-        "findings": mine,
+        "findings": _with_text(mine, bundle, sid),
         "decisions": history,
         "aliases": {"forward": forward, "former": former},
         "prompts": (bundle.get("prompts") or {}).get(sid) or [],
@@ -112,7 +125,7 @@ def verdicts_view(verdicts):
 
 
 def findings_view(bundle, status):
-    return {"findings": list(findings_mod.collect(bundle, status).values())}
+    return {"findings": _with_text(findings_mod.collect(bundle, status).values(), bundle)}
 
 
 def history(records, bundle):

@@ -3,8 +3,8 @@
 import { vi } from 'vitest';
 import type { Backend, Can } from '../src/api/backend';
 import type {
-  Action, ApprovedUser, Decision, DecisionDraft, HistoryRow, Item, Question, ReviewIndex, ReviewTypePage, SubjectIndex,
-  SubjectView, TeamMember, Verdicts, Vote,
+  Action, ApprovedUser, Decision, DecisionDraft, HistoryRow, Item, Pending, Question, ReviewIndex, ReviewTypePage,
+  SubjectIndex, SubjectView, TeamMember, Verdicts, Vote,
 } from '../src/api/types';
 
 export const LOCAL: Can = { decide: true, vote: false, apply: true, export: false, adminTeam: false, adminAccounts: false };
@@ -71,7 +71,7 @@ export function fakeBackend(mode: 'local' | 'hosted' = 'local', can: Can = LOCAL
     verdicts: vi.fn(async () => data.verdicts ?? {}),
     findings: vi.fn(async () => []),
     history: vi.fn(async (): Promise<HistoryRow[]> => []),
-    pending: vi.fn(async () => ({ decisions: [], errors: {}, files: [], ok: true })),
+    pending: vi.fn(async (): Promise<Pending> => ({ decisions: [], errors: {}, files: [], ok: true })),
     decisions: vi.fn(async () => [...decisions]),
     answer: vi.fn(async (q: { sid: string; reviewType: string; action: Action }, draft: DecisionDraft) => {
       if (mode === 'hosted') {

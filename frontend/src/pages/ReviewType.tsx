@@ -98,6 +98,16 @@ export default function ReviewType() {
   }
 
   const answered = mode === 'hosted' && !can.decide ? 'answered' : 'decided';
+  const hint = mode === 'local'
+    ? 'Click one answer per item. It is saved as a pending decision; nothing changes until you apply, and Undo is one click.'
+    : can.decide
+      ? 'Click one answer per item to vote. Under a row with votes, "Decide from tally" turns them into a decision.'
+      : 'Click one answer per item. It is your vote; curators turn votes into decisions.';
+  const emptyText = items.length === 0
+    ? 'No items of this kind right now.'
+    : search.trim()
+      ? 'Nothing here matches your search.'
+      : `All ${items.length} items here are ${answered}. Untick "${mode === 'hosted' && !can.decide ? 'Hide ones I answered' : 'Hide decided'}" to see them.`;
   return (
     <QueryState isPending={page.isPending} error={page.error} onRetry={page.refetch}>
       {page.data ? (
@@ -110,6 +120,7 @@ export default function ReviewType() {
             <h1 className="m-0">{page.data.type.title}</h1>
             {page.data.type.question ? <p className="text-lg mt-2 mb-0">{page.data.type.question}</p> : null}
             {page.data.type.help ? <p className="page__lede text-sm mt-1">{page.data.type.help}</p> : null}
+            <p className="page__hint mt-2 mb-0" data-testid="hint">{hint}</p>
             <div className="toolbar mt-3">
               <span className="muted" data-testid="progress">
                 {doneCount} of {items.length} {answered}
@@ -125,7 +136,7 @@ export default function ReviewType() {
           </div>
 
           {visible.length === 0 ? (
-            <div className="card query-state">Nothing left of this kind.</div>
+            <div className="card query-state" data-testid="empty">{emptyText}</div>
           ) : (
             groups.map(([name, rows]) => {
               const undone = rows.filter((it) => !isDone(it) && approveAction(it));
@@ -159,7 +170,7 @@ export default function ReviewType() {
           <ConfirmDialog
             isOpen={!!approving}
             title="Approve all"
-            message={approving ? `Approve all ${approving.rows.length} undecided items in ${approving.group} as "looks right"?` : ''}
+            message={approving ? `Approve all ${approving.rows.length} undecided items in ${approving.group} as "looks right"? Each one is saved as its own ${mode === 'local' ? 'pending decision' : 'vote'}.` : ''}
             confirmLabel="Approve all"
             onCancel={() => setApproving(null)}
             onConfirm={async () => {

@@ -396,6 +396,12 @@ body {
   color: rgb(var(--color-muted-strong));
 }
 
+/* In a table cell: let a long label wrap instead of widening the column. */
+.badge--wrap {
+  display: inline;
+  white-space: normal;
+}
+
 .tag-list {
   display: flex;
   flex-wrap: wrap;

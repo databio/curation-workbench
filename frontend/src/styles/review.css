@@ -153,10 +153,96 @@
   font-size: var(--font-size-xs);
 }
 
+/* The card's button preview: grey button-shaped chips, so it reads as
+   "these are the buttons on that page", not as links. */
 .type-card__answers {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
   margin: var(--space-3) 0 0;
-  color: rgb(var(--color-accent-text));
+  color: rgb(var(--color-muted));
   font-size: var(--font-size-xs);
+}
+
+.type-card__answers-label {
+  margin-right: var(--space-1);
+}
+
+.type-card__answer {
+  padding: 0 var(--space-2);
+  border: var(--border-width) solid rgb(var(--color-border-strong));
+  border-radius: var(--radius-sm);
+  background: rgb(var(--color-surface-alt));
+  color: rgb(var(--color-muted-strong));
+  white-space: nowrap;
+}
+
+/* --- how it works (review home) --- */
+.steps {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(var(--card-min-width), 1fr));
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.steps__step {
+  display: flex;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border: var(--border-width) solid rgb(var(--color-border));
+  border-radius: var(--radius-md);
+  background: rgb(var(--color-surface-alt));
+  font-size: var(--font-size-sm);
+}
+
+.steps__num {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--step-num-size);
+  height: var(--step-num-size);
+  border-radius: var(--radius-full);
+  background: rgb(var(--color-primary));
+  color: rgb(var(--color-on-primary));
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-bold);
+}
+
+.page__hint {
+  color: rgb(var(--color-muted-strong));
+  font-size: var(--font-size-sm);
+}
+
+/* A review type named as a plain (non-code) tag, e.g. on All items and a subject page. */
+.type-tag {
+  display: inline-block;
+  margin-right: var(--space-1);
+  padding: 0 var(--space-2);
+  border: var(--border-width) solid rgb(var(--color-border));
+  border-radius: var(--radius-full);
+  background: rgb(var(--color-surface-alt));
+  color: rgb(var(--color-link));
+  font-size: var(--font-size-xs);
+  text-decoration: none;
+}
+
+.type-tag:hover {
+  border-color: rgb(var(--color-primary));
+}
+
+/* An operation as `field: value` pairs. */
+.op-list {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+}
+
+.op-list__pair {
+  overflow-wrap: anywhere;
 }
 
 /* --- review type page --- */
@@ -227,9 +313,23 @@
 }
 
 .review-item__done {
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  background: rgb(var(--color-success-bg));
   color: rgb(var(--color-success));
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
+}
+
+.review-item__done .link-button {
+  color: inherit;
+}
+
+.review-item__editor-label {
+  display: block;
+  margin-top: var(--space-3);
+  color: rgb(var(--color-muted-strong));
+  font-size: var(--font-size-xs);
 }
 
 .review-item__desc {
@@ -282,8 +382,9 @@
   display: block;
   width: 100%;
   max-width: none;
-  margin-top: var(--space-3);
+  margin-top: var(--space-1);
   box-sizing: border-box;
+  font-size: var(--font-size-sm);
 }
 
 .review-item__actions {

@@ -27,6 +27,23 @@ describe('review home', () => {
     expect(screen.getByRole('link', { name: /Sign-off 0/ })).toHaveClass('type-card--empty');
   });
 
+  it('card button previews are plain chips named after the real buttons, not links', async () => {
+    renderAt('/p/proj', fakeBackend('local', LOCAL, { review: REVIEW }));
+    await screen.findByText('Vocabulary');
+    const previews = screen.getAllByTestId('answers');
+    expect(previews.map((p) => p.textContent)).toEqual(['Buttons:AcceptReject', 'Buttons:Looks right']);
+    const chips = previews.flatMap((p) => [...p.querySelectorAll('.type-card__answer')]);
+    expect(chips.map((c) => c.textContent)).toEqual(['Accept', 'Reject', 'Looks right']);
+    expect(chips.every((c) => c.tagName === 'SPAN' && !c.closest('a.type-card__answer'))).toBe(true);
+    expect(screen.getByRole('list', { name: 'How it works' }).textContent).toContain('saved as a pending decision');
+  });
+
+  it('hosted: the steps say a click is a vote', async () => {
+    renderAt('/p/proj', fakeBackend('hosted', VOTER, { review: REVIEW, questions: [] }));
+    await screen.findByText('Vocabulary');
+    expect(screen.getByRole('list', { name: 'How it works' }).textContent).toContain('Each answer is your vote');
+  });
+
   it('hosted: answered counts, and waiting counts for curators', async () => {
     const q = (sid: string, mine: boolean, total: number) => ({
       sid, review_type: 'vocabulary/links', state: 'open' as const, outcome: null, decision_id: null, answers: [], total,
@@ -55,7 +72,7 @@ const VERDICTS: Verdicts = {
 const VIEW: SubjectView = {
   subject: { sid: 'term:X', kind: 'term', name: 'X', label: 'ex', slug: 'term-x', hash: 'hx', payload: { label: 'ex', tags: ['a', 'b'] } },
   status: { state: 'open', score: 1.5, open_findings: [] },
-  findings: [{ id: 'f:1', rule: 'r', severity: 'warn', subjects: ['term:X'], message: 'msg', suggested_verdict: 'keep', open: true }],
+  findings: [{ id: 'f:1', rule: 'r', severity: 'warn', subjects: ['term:X'], message: 'msg', text: 'In plain words.', suggested_verdict: 'keep', open: true }],
   decisions: [decision({ id: 'DEC-0003', subject: 'term:X', status: 'pending' })],
   aliases: { forward: null, former: [] }, prompts: [], panels: [{ title: 'Usage', text: '5 files.' }], browse: null,
 };
@@ -67,6 +84,10 @@ describe('subject page and decision control', () => {
     expect(await screen.findByRole('heading', { name: 'ex' })).toBeInTheDocument();
     expect(screen.getByText('5 files.')).toBeInTheDocument();
     expect(screen.getByText('DEC-0003', { selector: '.history-entry span' })).toBeInTheDocument();
+    // The decision shows its verdict label, not the id; the finding its plain words, not its message.
+    expect(screen.getByText('Keep as is', { selector: '.history-entry .badge' })).toBeInTheDocument();
+    expect(screen.getByText('In plain words.')).toBeInTheDocument();
+    expect(screen.queryByText('msg')).toBeNull();
     const select = screen.getByLabelText('Verdict') as HTMLSelectElement;
     expect(select.value).toBe('keep'); // suggested by the finding
     expect([...select.options].map((o) => o.value)).toEqual(['', 'keep', 'merge', 'set_flags']); // seed-only dropped
@@ -84,7 +105,7 @@ describe('subject page and decision control', () => {
     await userEvent.selectOptions(screen.getByLabelText('Verdict'), 'merge');
     await userEvent.type(screen.getByLabelText('into *'), 'term:Y');
     await userEvent.selectOptions(screen.getByLabelText('mappings *'), 'move');
-    const save = screen.getByRole('button', { name: 'Save' });
+    const save = screen.getByRole('button', { name: 'Save as pending' });
     expect(save).toBeDisabled(); // rationale required
     await userEvent.type(screen.getByLabelText('Rationale'), 'Same thing.');
     await waitFor(() => expect(save).toBeEnabled());
@@ -113,17 +134,51 @@ describe('subject page and decision control', () => {
   });
 });
 
+describe('subject page: where it is waiting', () => {
+  it('links to the review pages that list the item', async () => {
+    const review: ReviewIndex = { ...REVIEW, tracks: [{ ...REVIEW.tracks[0], types: [
+      { ...REVIEW.tracks[0].types[0], sids: ['term:X'] }, { ...REVIEW.tracks[0].types[1], sids: ['term:Y'] },
+    ] }] };
+    renderAt('/p/proj/subject/term-x', fakeBackend('local', LOCAL, { index: INDEX, subject: VIEW, verdicts: VERDICTS, review }));
+    await screen.findByRole('heading', { name: 'ex' });
+    const line = await screen.findByTestId('waiting-on');
+    expect(within(line).getAllByRole('link').map((a) => [a.textContent, a.getAttribute('href')]))
+      .toEqual([['Vocabulary: Links', '/p/proj/review/vocabulary/links']]);
+  });
+});
+
+describe('apply', () => {
+  it('groups pending decisions under verdict labels and spells out operations', async () => {
+    const b = fakeBackend('local', LOCAL, { index: INDEX, verdicts: VERDICTS });
+    b.pending.mockResolvedValue({ ok: true, errors: {}, files: [], decisions: [
+      { ...decision({ id: 'DEC-0001', subject: 'term:X', verdict: 'keep' }), effects: null },
+      { ...decision({ id: 'DEC-0002', subject: 'term:Y', verdict: 'set_flags', operation: { op: 'set_flags', n: 2, flag: false } }), effects: null },
+    ] });
+    renderAt('/p/proj/apply', b);
+    expect(await screen.findByRole('heading', { name: /Keep as is/ })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /Flags/ })).toBeInTheDocument();
+    expect(screen.queryByText('set_flags')).toBeNull();
+    expect(screen.getByText('n:').parentElement).toHaveTextContent('n: 2');
+    expect(screen.getByText('flag:').parentElement).toHaveTextContent('flag: no');
+    expect(screen.getByRole('button', { name: 'Apply all (2)' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Preview changes' })).toBeInTheDocument();
+  });
+});
+
 describe('history', () => {
   const rows: HistoryRow[] = [
     { ...decision({ id: 'DEC-0002', subject: 'term:X', verdict: 'keep', status: 'pending', rationale: 'alpha' }), now: null, name: 'ex', kind: 'term', layer: 1, slug: 'term-x' },
     { ...decision({ id: 'DEC-0001', subject: 'slot:a', verdict: 'set_cardinality', status: 'applied', rationale: 'beta' }), now: null, name: 'a', kind: 'slot', layer: 2, slug: 'slot-a' },
   ];
   it('filters by kind and status, and searches', async () => {
-    const b = fakeBackend('local', LOCAL, { index: INDEX });
+    const b = fakeBackend('local', LOCAL, { index: INDEX, verdicts: VERDICTS });
     b.history.mockResolvedValue(rows);
     renderAt('/p/proj/history', b);
     await screen.findByText('DEC-0002');
     expect(screen.getByTestId('count')).toHaveTextContent('Showing 2 of 2.');
+    // Verdicts in words: the label when verdicts.yaml knows the kind, else the id with spaces.
+    expect(screen.getByText('Keep as is', { selector: '.badge' })).toBeInTheDocument();
+    expect(screen.getByText('set cardinality', { selector: '.badge' })).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText('Kind'), { target: { value: 'slot' } });
     expect(screen.getByTestId('count')).toHaveTextContent('Showing 1 of 2.');
     fireEvent.change(screen.getByLabelText('Kind'), { target: { value: '' } });

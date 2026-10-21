@@ -1,4 +1,4 @@
-import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { CurationError } from '../src/api/backend';
@@ -20,6 +20,20 @@ describe('review type page', () => {
     act(() => triggerIntersection());
     await waitFor(() => expect(rows()).toHaveLength(80));
     expect(screen.getByTestId('progress')).toHaveTextContent('0 of 500 decided');
+    expect(screen.getByTestId('hint')).toHaveTextContent('saved as a pending decision');
+  });
+
+  it('empty states: nothing of this kind, all decided, or no search match', async () => {
+    renderAt(PATH, fakeBackend('local', undefined, { page: page([]) }));
+    expect(await screen.findByTestId('empty')).toHaveTextContent('No items of this kind right now.');
+    cleanup();
+    const b = fakeBackend('local', undefined, {
+      page: page([item(1)]), decisions: [decision({ id: 'DEC-0011', subject: 'term:T1', evidence: [] })],
+    });
+    renderAt(PATH, b);
+    expect(await screen.findByTestId('empty')).toHaveTextContent('All 1 items here are decided. Untick "Hide decided" to see them.');
+    fireEvent.change(screen.getByLabelText('Search'), { target: { value: 'zzz' } });
+    expect(screen.getByTestId('empty')).toHaveTextContent('Nothing here matches your search.');
   });
 
   it('search filters title, reasons and choice text; hide-decided hides answered rows', async () => {
@@ -56,7 +70,10 @@ describe('review type page', () => {
       subject: 'term:T1', verdict: 'keep', operation: null, rationale: 'Because.', also_affects: ['term:T9'],
       evidence: [{ kind: 'finding', id: 'f:1' }], subject_hashes: { 'term:T1': 'h1', 'term:T9': 'h9' }, supersedes: null,
     });
-    expect(await screen.findByText(/Saved: keep \(DEC-0010\)/)).toBeInTheDocument();
+    // The saved line names the button that was clicked; the decision id is a tooltip.
+    const saved = await screen.findByText(/Saved as pending: Keep/);
+    expect(saved).toHaveAttribute('title', 'DEC-0010 · keep');
+    expect(screen.getByRole('button', { name: 'Undo' })).toBeInTheDocument();
   });
 
   it('editor actions validate and read the editor into the operation', async () => {
@@ -175,6 +192,7 @@ describe('hosted review type page', () => {
     expect(screen.queryByRole('button', { name: 'Decide from tally' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Decide this' })).toBeNull();
     expect(screen.getByTestId('progress')).toHaveTextContent('1 of 1 answered');
+    expect(screen.getByTestId('hint')).toHaveTextContent('It is your vote');
     await userEvent.click(screen.getByRole('button', { name: 'Change' }));
     await userEvent.click(screen.getByRole('button', { name: 'Merge' }));
     await waitFor(() => expect(b.answer).toHaveBeenCalledWith(

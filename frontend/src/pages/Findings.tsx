@@ -24,7 +24,10 @@ export default function Findings() {
     <div className="page">
       <div>
         <h1 className="m-0">Findings</h1>
-        <p className="page__lede text-sm mt-1">Open findings from the linter and the project's own checks, by rule.</p>
+        <p className="page__lede text-sm mt-1">
+          Everything the automatic checks flagged and nobody has settled yet, grouped by check. These are what put items
+          on the review pages. Open a check to see its items.
+        </p>
       </div>
       <QueryState isPending={findings.isPending} error={findings.error} onRetry={findings.refetch} isEmpty={groups.length === 0}
         empty="No open findings.">
@@ -40,8 +43,8 @@ export default function Findings() {
               {open === rule ? (
                 <LazyList as="ul" className="finding-list mt-2" items={list} keyOf={(f) => f.id}
                   render={(f) => (
-                    <li>
-                      <span className="flex-1 min-w-0">{f.message}</span>
+                    <li title={f.message}>
+                      <span className="flex-1 min-w-0">{f.text ?? f.message}</span>
                       <span className="flex flex-wrap gap-2">
                         {f.subjects.map((s) => <SubjectLink key={s} sid={s} index={index.data} />)}
                       </span>

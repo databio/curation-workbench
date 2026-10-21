@@ -10,7 +10,10 @@ export default function Projects() {
   const list = projects.data ?? [];
   return (
     <div className="page">
-      <h1 className="m-0">Projects</h1>
+      <div>
+        <h1 className="m-0">Projects</h1>
+        <p className="page__lede text-sm mt-1">Pick a project to review. Each one is a schema whose team votes on its terms and fields.</p>
+      </div>
       <QueryState isPending={projects.isPending} error={projects.error} onRetry={projects.refetch} isEmpty={list.length === 0}
         empty="You are not on any project's team yet. Ask an admin to add you.">
         <ul className="type-grid">
@@ -19,7 +22,10 @@ export default function Projects() {
               <Link to={projectPath(p.slug)} className="type-card">
                 <h3 className="m-0">{p.name}</h3>
                 <p className="type-card__help">
-                  {p.role ?? 'not on the team'}{p.commit ? ` · commit ${p.commit.slice(0, 8)}` : ' · not synced yet'}
+                  {p.role === 'curator' ? 'You are a curator: you vote and decide'
+                    : p.role === 'voter' ? 'You are a voter'
+                      : 'You are not on this project\'s team'}
+                  {p.synced_at ? ` · last synced ${p.synced_at.slice(0, 10)}` : ' · not synced yet'}
                 </p>
               </Link>
             </li>

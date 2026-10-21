@@ -62,7 +62,7 @@ def test_toy_items(toy):
     # keep-or-cut has no toy rows; its builder on its own:
     _, acts, _ = answers.keep_or_cut("term:TOY_0001", [], {}, answers.Ctx(bundle))
     assert [a["verdict"] for a in acts] == ["keep", "delete"]
-    assert acts[1]["confirm"] == 'Delete "red"? It goes away when applied.'
+    assert acts[1]["confirm"] == 'Delete "red"? It is removed from the schema when you apply.'
 
 
 def test_answer_keys():
@@ -98,6 +98,11 @@ def test_reasons_config():
     assert answers.reasons_for([f("plain", "m")], "term:A", ctx) == ["Not linked."]
     assert answers.reasons_for([f("sim", "similarity 0.91", ("term:A", "term:B"))], "term:A", ctx) == \
         ['Like "beta" (0.91).']
+    # A float-looking group becomes a float, so templates can format it.
+    pct = answers.Ctx({**bundle, "review_types": {"title": "P", "reasons": {
+        "sim": {"pattern": r"similarity (?P<score>[\d.]+)", "text": "{score:.0%} like \"{other}\"."}}}})
+    assert answers.reasons_for([f("sim", "similarity 0.8527", ("term:A", "term:B"))], "term:A", pct) == \
+        ['85% like "beta".']
 
 
 def test_review_types_v1_rejected(toy):

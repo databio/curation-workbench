@@ -8,7 +8,8 @@ import { memo, useState } from 'react';
 import { Link } from 'react-router';
 import { saveErrorMessage, useBackend } from '../api/backend';
 import type { Action, Answer, Decision, DecisionDraft, Item, MyVote, Question, SubjectIndex, Vote } from '../api/types';
-import { actionFor, buildDraft, verdictLabel } from '../lib/draft';
+import { useVerdicts } from '../hooks/useData';
+import { actionFor, actionForDecision, buildDraft, describeOperation, verdictLabel } from '../lib/draft';
 import { subjectPath } from '../lib/paths';
 import { ConfirmDialog } from './ConfirmDialog';
 
@@ -39,9 +40,25 @@ export function rowDone(s: RowState): boolean {
   return !!(s.decision || (s.mine && !s.mine.stale) || s.resolved || s.question?.state === 'resolved');
 }
 
+/** `{field: value}` pairs of an operation as a short inline list. */
+export function OperationSummary({ op, className = '' }: { op: Record<string, unknown> | null | undefined; className?: string }) {
+  const pairs = describeOperation(op);
+  if (!pairs.length) return null;
+  return (
+    <span className={`op-list ${className}`.trim()}>
+      {pairs.map(([k, v]) => (
+        <span key={k} className="op-list__pair">
+          <span className="muted">{k}:</span> {v}
+        </span>
+      ))}
+    </span>
+  );
+}
+
 function ReviewItemInner({ item, reviewType, index, state, onChanged }: ReviewItemProps) {
   const backend = useBackend();
   const { can, mode, project } = backend;
+  const verdicts = useVerdicts();
   const [note, setNote] = useState('');
   const [editor, setEditor] = useState(item.editor?.value ?? '');
   const [msg, setMsg] = useState('');
@@ -97,19 +114,23 @@ function ReviewItemInner({ item, reviewType, index, state, onChanged }: ReviewIt
   }
 
   const button = (a: Action) => (
-    <button key={a.answer + a.label} type="button" className={TONE[a.tone ?? 'neutral']} disabled={saving || !(can.decide || can.vote)} onClick={() => click(a)}>
+    <button key={a.answer + a.label} type="button" className={TONE[a.tone ?? 'neutral']} disabled={saving || !(can.decide || can.vote)}
+      title={a.rationale} onClick={() => click(a)}>
       {a.label}
     </button>
   );
 
-  const voteLabel = (answer: string, verdict?: string) => actionFor(item, answer)?.label ?? (verdict ? verdictLabel(verdict) : answer);
+  /** A vote's or decision's answer in the words of the button that makes it. */
+  const voteLabel = (answer: string, verdict?: string) =>
+    actionFor(item, answer)?.label ?? (verdict ? verdictLabel(verdict, item.kind, verdicts.data) : answer);
+  const decisionLabel = (d: Decision) => actionForDecision(item, d)?.label ?? verdictLabel(d.verdict, item.kind, verdicts.data);
 
   return (
     <li className={`review-item${done ? ' review-item--done' : ''}`} data-sid={item.sid}>
       <div className="review-item__head">
         <div className="min-w-0">
           {href ? (
-            <Link to={href} className="review-item__title">
+            <Link to={href} className="review-item__title" title="Open this item's page">
               {item.title}
             </Link>
           ) : (
@@ -129,8 +150,8 @@ function ReviewItemInner({ item, reviewType, index, state, onChanged }: ReviewIt
             </a>
           ) : null}
         </div>
-        <DoneLine item={item} state={state} mode={mode} voteLabel={voteLabel} onUndo={undo} onChange={() => setChanging(true)} canDecide={can.decide}
-          onWithdrawn={() => onChanged(item.sid, null)} />
+        <DoneLine state={state} mode={mode} voteLabel={voteLabel} decisionLabel={decisionLabel} onUndo={undo}
+          onChange={() => setChanging(true)} canDecide={can.decide} onWithdrawn={() => onChanged(item.sid, null)} />
       </div>
 
       {item.description && item.editor?.field !== 'description' ? <p className="review-item__desc">{item.description}</p> : null}
@@ -150,7 +171,7 @@ function ReviewItemInner({ item, reviewType, index, state, onChanged }: ReviewIt
           {item.choices.map((c) => (
             <div key={c.text} className="review-item__choice">
               <div className="min-w-0 text-sm">
-                <div>{c.text}</div>
+                <div className="font-medium">{c.text}</div>
                 {c.detail ? (
                   <div className="review-item__detail" title={c.detail}>
                     {c.detail}
@@ -162,14 +183,17 @@ function ReviewItemInner({ item, reviewType, index, state, onChanged }: ReviewIt
           ))}
 
           {item.editor ? (
-            <textarea
-              className="form__input review-item__editor"
-              aria-label={item.editor.field === 'description' ? 'New definition' : 'Examples'}
-              rows={item.editor.field === 'description' ? 3 : 2}
-              placeholder={item.editor.placeholder}
-              value={editor}
-              onChange={(e) => setEditor(e.target.value)}
-            />
+            <label className="review-item__editor-label">
+              <span>{item.editor.field === 'description' ? 'Edit the text here, then save it:' : 'Examples, one per line:'}</span>
+              <textarea
+                className="form__input review-item__editor"
+                aria-label={item.editor.field === 'description' ? 'New definition' : 'Examples'}
+                rows={item.editor.field === 'description' ? 3 : 2}
+                placeholder={item.editor.placeholder}
+                value={editor}
+                onChange={(e) => setEditor(e.target.value)}
+              />
+            </label>
           ) : null}
 
           <div className="review-item__actions">
@@ -178,7 +202,7 @@ function ReviewItemInner({ item, reviewType, index, state, onChanged }: ReviewIt
               type="text"
               className="form__input review-item__note"
               aria-label="Note"
-              placeholder="Note (optional): why? Replaces the default reason."
+              placeholder="Why? (optional, saved with your answer)"
               value={note}
               onChange={(e) => setNote(e.target.value)}
             />
@@ -186,7 +210,7 @@ function ReviewItemInner({ item, reviewType, index, state, onChanged }: ReviewIt
           {msg ? <p className="review-item__msg" role="status">{msg}</p> : null}
           {href ? (
             <Link to={href} className="review-item__more">
-              Something else (rename, merge, move…) →
+              Need another action (rename, merge, move, add a link…)? Open its page →
             </Link>
           ) : null}
         </div>
@@ -216,11 +240,11 @@ function ReviewItemInner({ item, reviewType, index, state, onChanged }: ReviewIt
   );
 }
 
-function DoneLine({ item, state, mode, voteLabel, onUndo, onChange, canDecide, onWithdrawn }: {
-  item: Item;
+function DoneLine({ state, mode, voteLabel, decisionLabel, onUndo, onChange, canDecide, onWithdrawn }: {
   state: RowState;
   mode: 'local' | 'hosted';
   voteLabel: (answer: string, verdict?: string) => string;
+  decisionLabel: (d: Decision) => string;
   onUndo: () => void;
   onChange: () => void;
   canDecide: boolean;
@@ -230,8 +254,8 @@ function DoneLine({ item, state, mode, voteLabel, onUndo, onChange, canDecide, o
   if (state.resolved) {
     const d = state.resolved;
     return (
-      <span className="review-item__done">
-        Decided: {verdictLabel(d.verdict)} ({d.id}) by {d.decided_by}
+      <span className="review-item__done" title={`${d.id} · ${d.verdict}`}>
+        ✓ Decided by {d.decided_by}: {decisionLabel(d)}
         {canDecide && d.status === 'pending' ? (
           <button type="button" className="link-button ml-1" onClick={async () => {
             await backend.withdraw(d);
@@ -244,17 +268,20 @@ function DoneLine({ item, state, mode, voteLabel, onUndo, onChange, canDecide, o
     );
   }
   if (state.question?.state === 'resolved' && state.question.outcome === 'no_action') {
-    return <span className="review-item__done">Resolved: nothing to do</span>;
+    return <span className="review-item__done">✓ Closed: nothing to do</span>;
   }
   if (mode === 'local' && state.decision) {
     const d = state.decision;
     return (
-      <span className="review-item__done">
-        Saved: {verdictLabel(d.verdict)} ({d.id}){' '}
+      <span className="review-item__done" title={`${d.id} · ${d.verdict}`}>
+        ✓ Saved as pending: {decisionLabel(d)}
         {d.status === 'pending' ? (
-          <button type="button" className="link-button" onClick={onUndo}>
-            Undo
-          </button>
+          <>
+            {' · '}
+            <button type="button" className="link-button" onClick={onUndo}>
+              Undo
+            </button>
+          </>
         ) : null}
       </span>
     );
@@ -262,7 +289,7 @@ function DoneLine({ item, state, mode, voteLabel, onUndo, onChange, canDecide, o
   if (mode === 'hosted' && state.mine) {
     return (
       <span className="review-item__done">
-        Your vote: {voteLabel(state.mine.answer, state.mine.proposal?.verdict)} ·{' '}
+        ✓ Your vote: {voteLabel(state.mine.answer, state.mine.proposal?.verdict)} ·{' '}
         <button type="button" className="link-button" onClick={onChange}>
           Change
         </button>{' '}
@@ -273,7 +300,6 @@ function DoneLine({ item, state, mode, voteLabel, onUndo, onChange, canDecide, o
       </span>
     );
   }
-  void item;
   return null;
 }
 
@@ -288,6 +314,7 @@ function Tally({ item, reviewType, index, question, voteLabel, resolved, onChang
   onChanged: () => void;
 }) {
   const backend = useBackend();
+  const verdicts = useVerdicts();
   const [votes, setVotes] = useState<Vote[] | null>(null);
   const [showVotes, setShowVotes] = useState(false);
   const [deciding, setDeciding] = useState<{ answer: string; voteId: number; proposal: Question['answers'][number]['proposal'] } | null>(null);
@@ -327,6 +354,7 @@ function Tally({ item, reviewType, index, question, voteLabel, resolved, onChang
   return (
     <div className="tally">
       <div className="tally__line">
+        <span className="muted">Votes so far:</span>
         {sorted.map((a) => (
           <span key={a.answer} className={`tally__answer${question.mine?.answer === a.answer ? ' tally__answer--mine' : ''}`}>
             {voteLabel(a.answer, a.proposal?.verdict)} ×{a.count}
@@ -345,10 +373,11 @@ function Tally({ item, reviewType, index, question, voteLabel, resolved, onChang
       {backend.can.decide && !resolved ? (
         <div className="tally__actions">
           <button type="button" className="btn btn--sm" disabled={!lead || tie || !lead.proposal}
+            title={tie ? 'The vote is tied: pick one with "Decide this"' : 'Make the leading answer the decision'}
             onClick={() => lead && setDeciding({ answer: lead.answer, voteId: lead.vote_ids[0], proposal: lead.proposal })}>
             Decide from tally
           </button>
-          <button type="button" className="btn btn--sm" onClick={() => setNoAction(true)}>
+          <button type="button" className="btn btn--sm" title="Close this question without a decision" onClick={() => setNoAction(true)}>
             Nothing to do
           </button>
         </div>
@@ -371,14 +400,14 @@ function Tally({ item, reviewType, index, question, voteLabel, resolved, onChang
         message={deciding?.proposal ? (
           <div className="stack">
             <div>
-              <strong>{verdictLabel(deciding.proposal.verdict)}</strong>
-              {deciding.proposal.operation ? <code className="block">{JSON.stringify(deciding.proposal.operation)}</code> : null}
+              <strong>{verdictLabel(deciding.proposal.verdict, item.kind, verdicts.data)}</strong>
+              <OperationSummary op={deciding.proposal.operation} className="block text-sm mt-1" />
             </div>
-            <div className="muted">Rationale: {deciding.proposal.rationale}</div>
+            <div className="muted">Reason: {deciding.proposal.rationale}</div>
           </div>
         ) : ''}
         confirmLabel="Decide"
-        textarea={{ label: 'New rationale (optional)', maxLength: 2000, placeholder: deciding?.proposal?.rationale ?? '' }}
+        textarea={{ label: 'Change the reason (optional)', maxLength: 2000, placeholder: deciding?.proposal?.rationale ?? '' }}
         onCancel={() => setDeciding(null)}
         onConfirm={async (text) => {
           const d = deciding!;
@@ -400,7 +429,7 @@ function Tally({ item, reviewType, index, question, voteLabel, resolved, onChang
       <ConfirmDialog
         isOpen={noAction}
         title="Nothing to do"
-        message="Close this question with no decision?"
+        message="Close this question with no decision? The votes stay on record."
         confirmLabel="Close it"
         textarea={{ label: 'Note (optional)', maxLength: 2000 }}
         onCancel={() => setNoAction(false)}

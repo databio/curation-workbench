@@ -83,6 +83,10 @@ def test_views_equal_routes(daemon):
     assert [d["id"] for d in sub["decisions"]] == ["DEC-0001"]
     assert get("/api/verdicts") == views.verdicts_view(bundle["verdicts"])
     assert get("/api/findings") == json.loads(json.dumps(views.findings_view(bundle, st)))
+    # Every finding carries `text`: the plain words of the project's `reasons`,
+    # or the raw message when (as in the toy) it has none.
+    assert all(f["text"] == f["message"] for f in get("/api/findings")["findings"])
+    assert all(f["text"] == f["message"] for f in sub["findings"])
     assert get("/api/history") == json.loads(json.dumps(views.history(records, bundle)))
     pend = get("/api/pending")
     assert [d["id"] for d in pend["decisions"]] == ["DEC-0001"] and pend["ok"] and pend["errors"] == {}

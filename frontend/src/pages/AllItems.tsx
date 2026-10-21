@@ -60,7 +60,7 @@ export default function AllItems() {
         <Link to={projectPath(project.slug)} className="text-sm">← Review</Link>
         <h1 className="m-0">All items</h1>
         <p className="page__lede text-sm mt-1">
-          Subjects that are open, stale or not yet reviewed, ranked by score. <span data-testid="count">Showing {shown.length} of {rows.length}.</span>
+          Every item still waiting for a decision, most urgent first. <span data-testid="count">Showing {shown.length} of {rows.length}.</span>
         </p>
       </div>
       <form className="filters card" onSubmit={(e) => e.preventDefault()}>
@@ -82,7 +82,7 @@ export default function AllItems() {
             {kinds.map((k) => <option key={k} value={k}>{k}</option>)}
           </select>
         </label>
-        <label className="filters__field"><span className="muted text-xs">State</span>
+        <label className="filters__field"><span className="muted text-xs">Status</span>
           <select className="form__input" aria-label="State" value={f.state} onChange={set('state')}>
             <option value="">All</option>
             {states.map((s) => <option key={s} value={s}>{s}</option>)}
@@ -100,8 +100,7 @@ export default function AllItems() {
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
-                    <SubjectLink sid={r.sid} index={index.data} className="font-semibold" />
-                    <span className="font-mono text-xs muted">{r.sid}</span>
+                    <span title={r.sid}><SubjectLink sid={r.sid} index={index.data} className="font-semibold" /></span>
                     <StateChip sid={r.sid} index={index.data} />
                   </div>
                   <div className="muted text-xs mt-1">
@@ -110,13 +109,13 @@ export default function AllItems() {
                   </div>
                   {r.types.length ? (
                     <div className="flex flex-wrap gap-2 mt-1 text-xs">
-                      {r.types.map((t) => <Link key={`${t.track}/${t.type}`} to={typePath(project.slug, t.track, t.type)} className="tag">{t.title}</Link>)}
+                      {r.types.map((t) => <Link key={`${t.track}/${t.type}`} to={typePath(project.slug, t.track, t.type)} className="type-tag">{t.title}</Link>)}
                     </div>
                   ) : null}
                 </div>
-                <div className="text-right">
+                <div className="text-right" title="Queue priority: higher comes first">
                   <div className="text-lg font-bold">{r.score.toFixed(2)}</div>
-                  <div className="muted text-xs">score</div>
+                  <div className="muted text-xs">priority</div>
                 </div>
               </div>
             </li>

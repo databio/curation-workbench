@@ -113,6 +113,8 @@ export interface Finding {
   severity: 'error' | 'warn' | 'info' | string;
   subjects: string[];
   message: string;
+  /** The finding in plain words (the project's `reasons` text; the message when it has none). */
+  text?: string;
   source?: string;
   suggested_verdict?: string | null;
   object?: string;

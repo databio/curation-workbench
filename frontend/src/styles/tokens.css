@@ -98,6 +98,7 @@
   --op-code-max-width: 14rem;
   --menu-min-width: 12rem;
   --note-min-width: 12rem;
+  --step-num-size: 1.5rem;
 
   /* Map the vendored snapgate components onto these same tokens so the auth
      UI (login, user menu, connections panel) reads as one system. */

@@ -19,6 +19,10 @@ export default function Login() {
       <h1 className="m-0">Curation review</h1>
       {sessionWasLost() ? <div className="banner">Your session expired. Sign in again.</div> : null}
       {params.get('error') ? <div className="banner banner--error">Sign-in failed. Please try again.</div> : null}
+      <p className="muted">
+        A place for a team to review a schema's terms and fields: each click is a vote, and curators turn votes into
+        decisions.
+      </p>
       <p className="muted">Sign in with your Prosopia account. New accounts wait for an admin to approve them.</p>
       <button type="button" className="btn btn--primary" onClick={() => {
         clearSessionLost();

@@ -6,6 +6,7 @@ import { useId, useMemo, useState } from 'react';
 import { saveErrorMessage, useBackend } from '../api/backend';
 import type { Action, Decision, DecisionDraft, SubjectIndex, Verdicts } from '../api/types';
 import { useChanged, useSubject } from '../hooks/useData';
+import { verdictLabel } from '../lib/draft';
 import { fieldSpec, readValue, showValue, type FieldSpec } from '../lib/fields';
 
 interface DecisionControlProps {
@@ -99,7 +100,7 @@ export function DecisionControl({ sid, kind, index, verdicts, findingId, suggest
     try {
       if (how === 'decide') {
         const d = await backend.decide(draft);
-        setMsg(`Saved ${d.id}.`);
+        setMsg(mode === 'local' ? `Saved as pending (${d.id}).` : `Decided (${d.id}).`);
       } else {
         const action: Action = {
           label: verdicts?.[kind]?.[verdict]?.label ?? verdict, verdict, operation: draft.operation,
@@ -130,6 +131,7 @@ export function DecisionControl({ sid, kind, index, verdicts, findingId, suggest
   }
 
   const ready = !!verdict && !!rationale.trim() && !busy && !!index;
+  const anyRequired = specs.some((s) => s.required);
   const kindOf = (spec: FieldSpec) => Object.entries(index ?? {})
     .filter(([, r]) => !r.retired && (!spec.sidKind || r.kind === spec.sidKind));
 
@@ -138,8 +140,8 @@ export function DecisionControl({ sid, kind, index, verdicts, findingId, suggest
       <div className="decision-control__latest">
         {latest ? (
           <>
-            <span className="font-mono">{latest.id}</span> · {latest.verdict} · {latest.status} · {latest.decided_by} ·{' '}
-            {latest.decided_on}
+            Latest: <span title={latest.verdict}>{verdictLabel(latest.verdict, kind, verdicts)}</span> · {latest.status} ·{' '}
+            {latest.decided_by} · {latest.decided_on} · <span className="font-mono">{latest.id}</span>
             {latest.rationale ? <span className="decision-control__rationale">{latest.rationale}</span> : null}
           </>
         ) : (
@@ -153,7 +155,7 @@ export function DecisionControl({ sid, kind, index, verdicts, findingId, suggest
       ) : null}
       <div className="decision-control__row">
         <select className="form__input" aria-label="Verdict" value={verdict} onChange={(e) => setVerdict(e.target.value)}>
-          <option value="">Choose a verdict…</option>
+          <option value="">Choose an action…</option>
           {options.map(([v, meta]) => (
             <option key={v} value={v}>
               {meta.label}
@@ -164,7 +166,7 @@ export function DecisionControl({ sid, kind, index, verdicts, findingId, suggest
           {specs.map((spec) => {
             const id = `${listId}-${spec.name}`;
             const set = (v: string) => setValues((x) => ({ ...x, [`${verdict}:${spec.name}`]: v }));
-            const label = spec.required ? `${spec.name} *` : spec.name;
+            const label = spec.required ? `${spec.name.replace(/_/g, ' ')} *` : spec.name.replace(/_/g, ' ');
             return (
               <label key={spec.name} className="decision-control__field" htmlFor={id}>
                 <span>{label}</span>
@@ -197,16 +199,18 @@ export function DecisionControl({ sid, kind, index, verdicts, findingId, suggest
             );
           })}
           {schema?.one_of ? (
-            <span className="muted text-xs">exactly one of: {schema.one_of.map((g) => g.join('+')).join(' | ')}</span>
+            <span className="muted text-xs">fill in exactly one of: {schema.one_of.map((g) => g.join(' + ')).join(', or ')}</span>
           ) : null}
+          {anyRequired ? <span className="muted text-xs">* required</span> : null}
         </div>
       </div>
-      <textarea className="form__input w-full" rows={2} aria-label="Rationale" placeholder="Rationale (required): why?"
+      <textarea className="form__input w-full" rows={2} aria-label="Rationale" placeholder="Why? (required)"
         value={rationale} onChange={(e) => setRationale(e.target.value)} />
       <div className="toolbar">
         {mode === 'local' ? (
-          <button type="button" className="btn btn--sm btn--primary" disabled={!ready} onClick={() => run('decide')}>
-            Save
+          <button type="button" className="btn btn--sm btn--primary" disabled={!ready}
+            title={ready ? 'Save a pending decision' : 'Choose an action and say why first'} onClick={() => run('decide')}>
+            Save as pending
           </button>
         ) : (
           <>

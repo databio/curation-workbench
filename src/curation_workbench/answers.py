@@ -144,10 +144,24 @@ def reason(f, sid, ctx):
         m = re.search(pattern, msg, re.S)
         if not m:
             return _fmt(r["else"], values) if "else" in r else msg
-        values.update({k: int(v) if isinstance(v, str) and v.isdigit() else v
-                       for k, v in m.groupdict().items()})
+        values.update({k: _number(v) for k, v in m.groupdict().items()})
     text = r.get("text")
     return _fmt(text, values) if text is not None else msg
+
+
+_FLOAT_RE = re.compile(r"^-?\d+\.\d+$")
+
+
+def _number(v):
+    """A regex group as a number when it looks like one (`12` -> 12,
+    `0.85` -> 0.85), so templates can format it (`{n:,}`, `{score:.0%}`)."""
+    if not isinstance(v, str):
+        return v
+    if v.isdigit():
+        return int(v)
+    if _FLOAT_RE.match(v):
+        return float(v)
+    return v
 
 
 def reasons_for(found, sid, ctx):
@@ -215,10 +229,10 @@ def links(sid, found, payload, ctx):
         else:
             accept = [action("Accept", "adopt_mapping", f"Accepted suggested link to {obj} ({label}).",
                              operation=op, evidence=f["id"], tone="primary")]
-        detail = f"{source.upper()} · similarity {float(s.get('score') or 0):.2f}"
+        detail = f"{source.upper()} · {float(s.get('score') or 0):.0%} similar"
         if s.get("definition"):
             detail += f" · {s['definition']}"
-        choices.append({"text": f"{label} ({obj})", "detail": detail, "actions": [
+        choices.append({"text": f"Suggested link: {label} ({obj})", "detail": detail, "actions": [
             *accept,
             action("Reject", "reject_mapping", f"{label} is not a match.", operation=op,
                    evidence=f["id"], tone="danger")]})
@@ -246,15 +260,18 @@ def links(sid, found, payload, ctx):
 
 
 def definitions(sid, found, payload, ctx):
+    """Terms have definitions; classes, fields and modules have descriptions."""
     f = _first(found, "terse-description") or _first(found, "enum-value-no-description") \
         or _first(found, "todo-marker")
+    word = "definition" if ctx.subjects.get(sid, {}).get("kind") == "term" else "description"
     desc = payload.get("description")
     editor = {"field": "description", "value": desc if desc is not None else "",
-              "placeholder": "Write the definition"}
+              "placeholder": f"Write the {word}"}
     return [], [
-        action("Save new definition", "edit_description", "Rewrote the definition.",
+        action(f"Save new {word}", "edit_description", f"Rewrote the {word}.",
                input="description", evidence=_id(f), tone="primary"),
-        action("Definition is fine", "keep", "Definition is clear as it is.", evidence=_id(f)),
+        action(f"{word.capitalize()} is fine", "keep", f"{word.capitalize()} is clear as it is.",
+               evidence=_id(f)),
     ], editor
 
 
@@ -268,10 +285,10 @@ def duplicates(sid, found, payload, ctx):
         if not other or other not in ctx.subjects or ctx.subjects[other].get("retired"):
             continue
         them = ctx.name(other)
-        choices.append({"text": f'"{me}" vs "{them}"', "detail": None, "actions": [
+        choices.append({"text": f'Same thing as "{them}"?', "detail": None, "actions": [
             action(f'Merge into "{them}"', "merge", f'Same meaning as "{them}".', evidence=f["id"],
                    also=[other], tone="danger", operation={"into": other, "mappings": "move"},
-                   confirm=f'Merge "{me}" into "{them}"? This term goes away when applied.'),
+                   confirm=f'Merge "{me}" into "{them}"? "{me}" is removed from the schema when you apply.'),
             action("Different things", "keep", f'Different from "{them}".', evidence=f["id"],
                    also=[other]),
         ]})
@@ -279,9 +296,14 @@ def duplicates(sid, found, payload, ctx):
     if compound:
         actions.append(action("Keep as one term", "keep_atomic",
                               "This is one concept, not a compound of facets.", evidence=compound["id"]))
-    fine = _first(found, "inline-enum") or _first(found, "shared-slot")
-    if fine:
-        actions.append(action("Fine as is", "keep", "Reviewed; leave as is.", evidence=fine["id"]))
+    shared = _first(found, "shared-slot")
+    if shared:
+        actions.append(action("Same meaning everywhere", "keep",
+                              "The field means the same thing in every class that lists it.",
+                              evidence=shared["id"], tone="primary"))
+    inline = _first(found, "inline-enum")
+    if inline:
+        actions.append(action("Leave it as is", "keep", "Reviewed; leave as is.", evidence=inline["id"]))
     return choices, actions, None
 
 
@@ -291,7 +313,7 @@ def keep_or_cut(sid, found, payload, ctx):
         action("Keep", "keep", "Worth keeping even though nothing uses it yet.", evidence=_id(f),
                tone="primary"),
         action("Delete", "delete", "Unused and not needed.", evidence=_id(f), tone="danger",
-               confirm=f'Delete "{ctx.name(sid)}"? It goes away when applied.'),
+               confirm=f'Delete "{ctx.name(sid)}"? It is removed from the schema when you apply.'),
     ], None
 
 
@@ -312,7 +334,7 @@ def fields(sid, found, payload, ctx):
         editor = {"field": "examples", "value": "", "placeholder": "One example value per line"}
         actions.append(action("Save examples", "set_examples", "Added examples.", input="examples",
                               evidence=ex["id"], tone="primary"))
-    actions.append(action("Fine as is", "keep", "Field is set up right as it is.",
+    actions.append(action("Leave it as it is", "keep", "Field is set up right as it is.",
                           evidence=_id(req or ex)))
     return choices, actions, editor
 

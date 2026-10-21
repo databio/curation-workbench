@@ -30,7 +30,7 @@ function MoreMenu() {
         ))}
         {can.adminTeam ? <li><Link className="menu__item" to={teamPath(project.slug)}>Team</Link></li> : null}
         {can.adminAccounts ? <li><Link className="menu__item" to="/admin/accounts">Accounts</Link></li> : null}
-        <li><Link className="menu__item" to={morePath(project.slug)}>All of these…</Link></li>
+        <li><Link className="menu__item" to={morePath(project.slug)}>Everything under More…</Link></li>
       </ul>
     </details>
   );
@@ -41,7 +41,7 @@ function LocalChip() {
   const health = useResource([backend.project.slug, 'health'], () => backend.health!(), { enabled: !!backend.health });
   const h = health.data;
   return (
-    <span className="mode-chip" title="Decisions are written to this checkout's decisions.yaml">
+    <span className="mode-chip" title={`Local mode: your answers are written to this checkout's decisions.yaml${h ? ` on branch ${h.git_branch}` : ''}.${h?.working_tree_dirty ? ' "uncommitted changes" means the checkout has edits not committed yet.' : ''}`}>
       Local{h ? ` · branch ${h.git_branch}` : ''} · {backend.me.name}
       {h?.working_tree_dirty ? <span className="mode-chip__dirty"> · uncommitted changes</span> : null}
     </span>
@@ -53,7 +53,7 @@ export function StaleBar() {
   const review = useReview();
   const health = useResource([backend.project.slug, 'health'], () => backend.health!(), { enabled: !!backend.health });
   if (!review.data || !health.data || review.data.schema_fingerprint === health.data.schema_fingerprint) return null;
-  return <div className="stale-bar" role="alert">These lists are older than the schema. Run cwb regen.</div>;
+  return <div className="stale-bar" role="alert">The schema changed after these lists were built. Rebuild them (<code>cwb regen</code>) and reload.</div>;
 }
 
 export function NavBar() {

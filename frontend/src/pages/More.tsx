@@ -11,9 +11,9 @@ export default function More() {
     <div className="page">
       <h1 className="m-0">More</h1>
       <ul className="more-list">
-        <li><Link to={historyPath(project.slug)}>History</Link> <span className="muted">Every decision, newest first.</span></li>
-        <li><Link to={allPath(project.slug)}>All items</Link> <span className="muted">The whole ranked queue, with filters.</span></li>
-        <li><Link to={findingsPath(project.slug)}>Findings</Link> <span className="muted">Open findings by rule.</span></li>
+        <li><Link to={historyPath(project.slug)}>History</Link> <span className="muted">Every decision ever recorded, newest first.</span></li>
+        <li><Link to={allPath(project.slug)}>All items</Link> <span className="muted">Every item still waiting, in one ranked list with filters.</span></li>
+        <li><Link to={findingsPath(project.slug)}>Findings</Link> <span className="muted">What the automatic checks flagged, grouped by check.</span></li>
         {(review.data?.more_links ?? []).map((l) => (
           <li key={l.url}><a href={l.url} target="_blank" rel="noreferrer">{l.label}</a> <span className="muted">On the project's own site.</span></li>
         ))}

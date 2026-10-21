@@ -8,9 +8,10 @@ import { CurationError, useBackend } from '../api/backend';
 import type { PendingDecision } from '../api/types';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { QueryState } from '../components/QueryState';
-import { StateChip } from '../components/StateChip';
 import { SubjectLink } from '../components/SubjectLink';
-import { usePending, useRebuilt, useSubjectIndex } from '../hooks/useData';
+import { OperationSummary } from '../components/ReviewItem';
+import { usePending, useRebuilt, useSubjectIndex, useVerdicts } from '../hooks/useData';
+import { kindOfSid, verdictLabel } from '../lib/draft';
 import { projectPath } from '../lib/paths';
 import { sessionGet, sessionSet } from '../lib/session';
 
@@ -68,6 +69,7 @@ export default function Apply() {
   const { project, can } = backend;
   const pending = usePending();
   const index = useSubjectIndex();
+  const verdicts = useVerdicts();
   const rebuilt = useRebuilt();
   const [log, setLog] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
@@ -75,8 +77,12 @@ export default function Apply() {
   const logRef = useRef<HTMLPreElement>(null);
   const WATCH = `cwb:${project.slug}:apply-watch`;
 
-  const doneNote = (code: number | null, dryRun: boolean) =>
-    `\n[exit ${code}]` + (code === 0 && !dryRun ? ' Applied. Review the changes and commit.' : '');
+  const doneNote = (code: number | null, dryRun: boolean) => {
+    if (code !== 0) return `\n[failed, exit ${code}] Nothing was changed.`;
+    return dryRun
+      ? '\n[done] Preview finished; nothing was written. The changes it would make are listed below.'
+      : '\n[done] Applied. Nothing is committed yet: look over the changes and commit them.';
+  };
 
   // After a reload mid-apply, follow the run through the daemon's log.
   useEffect(() => {
@@ -128,7 +134,10 @@ export default function Apply() {
 
   const p = pending.data;
   const groups = new Map<string, PendingDecision[]>();
-  for (const d of p?.decisions ?? []) groups.set(d.verdict, [...(groups.get(d.verdict) ?? []), d]);
+  for (const d of p?.decisions ?? []) {
+    const label = verdictLabel(d.verdict, kindOfSid(d.subject), verdicts.data);
+    groups.set(label, [...(groups.get(label) ?? []), d]);
+  }
   const errors = Object.entries(p?.errors ?? {});
   const files = p?.files ?? [];
 
@@ -146,12 +155,13 @@ export default function Apply() {
         </div>
         {can.apply ? (
           <div className="toolbar">
-            <button type="button" className="btn" disabled={running} onClick={() => run(true)}>
-              Dry run
+            <button type="button" className="btn" disabled={running} title="A dry run: shows what would change, writes nothing"
+              onClick={() => run(true)}>
+              Preview changes
             </button>
             <button type="button" className="btn btn--primary" disabled={running || !p?.decisions.length}
-              onClick={() => setConfirm(true)}>
-              Apply all
+              title="Edit the schema files for every pending decision" onClick={() => setConfirm(true)}>
+              Apply all{p?.decisions.length ? ` (${p.decisions.length})` : ''}
             </button>
           </div>
         ) : can.export && backend.exportUrl ? (
@@ -176,7 +186,8 @@ export default function Apply() {
           <p className="mb-0">
             It is all or nothing: if any step fails, every file is put back as it was. It does not commit or push.
             Afterwards, look over the changes (for example with <code>git diff</code>) and commit them.{' '}
-            <strong>Dry run</strong> shows the same changes without writing anything; the diff below is that preview.
+            <strong>Preview changes</strong> (a dry run) shows the same changes without writing anything; the diff below
+            is that preview.
           </p>
         </section>
       ) : (
@@ -210,24 +221,22 @@ export default function Apply() {
           </div>
         ) : null}
         <div className="stack">
-          {[...groups.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([verdict, list]) => (
-            <section key={verdict} className="card">
-              <h2 className="card__title">
-                {verdict} <span className="muted text-sm">{list.length}</span>
+          {[...groups.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([label, list]) => (
+            <section key={label} className="card">
+              <h2 className="card__title" title={list[0].verdict}>
+                {label} <span className="muted text-sm">{list.length}</span>
               </h2>
               <ul className="pending-list">
                 {list.map((d) => (
                   <li key={d.id} className="pending-entry">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-mono font-semibold">{d.id}</span>
-                      <SubjectLink sid={d.subject} index={index.data} />
-                      <span className="font-mono text-xs muted">{d.subject}</span>
-                      <StateChip sid={d.subject} index={index.data} />
+                      <span title={d.subject}><SubjectLink sid={d.subject} index={index.data} className="font-semibold" /></span>
+                      <span className="muted text-xs">{kindOfSid(d.subject)}</span>
                       <span className="muted text-xs">
-                        {d.decided_by} · {d.decided_on}
+                        {d.decided_by} · {d.decided_on} · <span className="font-mono">{d.id}</span>
                       </span>
                     </div>
-                    {d.operation ? <code className="block text-xs mt-1 break-all">{JSON.stringify(d.operation)}</code> : null}
+                    <OperationSummary op={d.operation} className="block text-xs mt-1" />
                     <p className="mt-1 mb-0">{d.rationale}</p>
                     <Effects d={d} />
                   </li>
@@ -249,7 +258,7 @@ export default function Apply() {
       <ConfirmDialog
         isOpen={confirm}
         title="Apply all"
-        message={`Edit the schema files for all ${p?.decisions.length ?? 0} pending decisions? Nothing is committed; you review and commit afterwards.`}
+        message={`Edit the schema files for all ${p?.decisions.length ?? 0} pending decisions? Nothing is committed: you look over the changes and commit them afterwards.`}
         confirmLabel="Apply all"
         onCancel={() => setConfirm(false)}
         onConfirm={async () => {
