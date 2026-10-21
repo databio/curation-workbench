@@ -82,7 +82,6 @@ def test_plugin_dir_required_when_plugins_listed(toy):
 PLUGIN = """import helper_mod
 
 def register(wb):
-    wb.routes.append(("GET", "/api/x", lambda api, tail: None))
     wb.regen.append(lambda wb, out: None)
     wb.signals["helped"] = lambda ctx: {s: helper_mod.ONE for s in ctx.subjects}
 """
@@ -99,8 +98,8 @@ def test_plugin_imports_only_from_plugin_dir(toy):
     before = list(sys.path)
     wb = open_hosted(toy)
     assert sys.path == before                       # plugin_dir removed again
-    assert wb.routes == [] and wb.regen == []
-    assert len(wb.warnings) == 3
+    assert wb.regen == []
+    assert len(wb.warnings) == 2
     bundle = snapshot.build(wb)
     assert bundle["plugins"] == ["toy_hosted_plugin"]
     assert set(bundle["signals"]["helped"].values()) == {1}
@@ -124,7 +123,7 @@ def test_plugin_import_error_is_structured(toy):
 
 
 def test_local_mode_without_plugin_dir_unchanged(toy):
-    (toy / "local_plugin_x.py").write_text("def register(wb):\n    wb.routes.append(1)\n")
+    (toy / "local_plugin_x.py").write_text("def register(wb):\n    wb.regen.append(1)\n")
     configure(toy, "plugins: [local_plugin_x]\n")
     wb = Workbench.open(toy / "workbench.yaml")
-    assert wb.routes == [1]
+    assert wb.regen == [1]

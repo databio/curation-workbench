@@ -1,10 +1,9 @@
 """Read-route bodies for the review UI, built from plain data.
 
 Every function takes plain data (a snapshot bundle, status.json and review.json
-data, decision records) and never a Workbench or a file path, so the local
-daemon (server.py) and the hosted API return identical JSON for the same
-inputs. `records` is the decision list: `wb.store.records()` locally,
-`derive.merge_decisions(repo, hosted)` in hosted mode.
+data, decision records) and never a Workbench or a file path, so the hosted
+API (hosted/service/data.py) runs no plugin code and the tests can call them
+directly. `records` is the decision list: `derive.merge_decisions(repo, hosted)`.
 
   review_index(review)                         GET /api/review
   review_type_page(review, track, type)        GET /api/review/<track>/<type>  (None: 404)
@@ -147,8 +146,8 @@ def history(records, bundle):
 def pending_view(records, *, effects=None, errors=None, files=None):
     """Pending decisions with what applying them would do. `effects`
     {id: {created, retired, renamed}}, `errors` {id: [str]} and `files`
-    [{path, diff}] come from an apply dry run (local mode only; hosted mode
-    passes no files)."""
+    [{path, diff}] come from an apply dry run (the hosted API passes none:
+    it never runs the apply engine)."""
     effects = effects or {}
     rows = [{**d, "effects": effects.get(d["id"])} for d in records if d.get("status") == "pending"]
     return {"decisions": rows, "errors": errors or {}, "files": files,

@@ -37,8 +37,7 @@ Signals may not read decisions. The one decision-dependent signal, `port`, is
 a *masked* signal: the bundle carries its raw values and derive zeroes it
 where a terminal decision exists.
 
-Local mode uses the same pair: `cwb regen` is snapshot then derive; the daemon
-caches the bundle and re-derives status per request.
+`cwb regen` (in a checkout) is the same pair: snapshot then derive.
 
 ## Trust model
 
@@ -205,25 +204,28 @@ Not yet exercised: the runner inside Docker with these limits (the
 isolation check was only run on a laptop, where it correctly says NOT
 ISOLATED), a real GitHub remote, and the webhook behind nginx.
 
-## The seam for "apply approved decisions and open a pull request"
+## How approved decisions reach the repo (and get marked applied)
 
-Not built; what exists for it:
+The service never holds git write credentials. The project repo pulls:
 
-- `derive.merge_decisions` already drops hosted decisions that appear in the
-  repo's `decisions.yaml` with `origin: {kind: hosted, ref: <H- id>}`, so after
-  a PR that lands them is merged, the next sync treats them as repo history.
-- The runner reserves `mode: "apply"` (400 today).
-- `cw_derived.decision_checks` answers "is this decision valid against the
-  plugin", which the apply step will require.
+1. A GitHub Action in the project repo (ONGA: `.github/workflows/curate.yml`)
+   runs `cwb pull <slug>` with a `curation:read` key (repo secret
+   `CURATE_API_KEY`) and opens a pull request with its own `GITHUB_TOKEN`.
+2. `cwb pull` reads `GET /api/v1/projects/<slug>/decisions/export`: pending
+   hosted decisions that are not stale and have no `decision_checks` errors
+   (the rest come back in `held`). It appends them to the checkout's
+   `decisions.yaml` with `store.landing.append_hosted` (renumbered to `DEC-`,
+   `origin: {kind: hosted, ref: <H- id>}`) and applies them with the normal
+   apply engine, all or nothing.
+3. After the merge, the next commit job publishes the new snapshot.
+   `publish_snapshot` first runs `publish.mark_landed`: every pending hosted
+   decision whose id appears as an `origin.ref` in `bundle.repo_decisions` is
+   marked applied (`PgStore.mark_applied`) with the repo record's `applied`
+   block plus `repo_id` and `commit` (a non-terminal record such as `defer`
+   stays pending in the repo; its hosted copy gets just the date). This runs
+   before the staleness pass, so a decision is never marked stale by its own
+   change. `merge_decisions` keeps dropping landed hosted decisions from the
+   merged list, so History shows the repo's `DEC-` record.
 
-The future step: `hosted/sync/apply_seam.py` with `ApplyRequest(resident_id,
-base_snapshot_id, decision_ids, requested_by)` and a job kind `apply`;
-preconditions: the base snapshot is current and every decision is approved,
-not stale, with empty checks. The runner's apply mode takes the tree at the
-base commit plus `decisions.yaml` with the chosen decisions appended by
-`export_yaml` (renumbered to `DEC-`, `origin.ref` = the `H-` id), runs the
-apply engine with `--emit`, and returns the staged changes without running the
-config's `apply:` shell commands. A separate publisher with a write token the
-worker never has pushes `cwb/apply-<id>` and opens the PR; after merge, the
-normal sync and `merge_decisions` close the loop and the worker marks the
-hosted decisions applied (`PgStore.mark_applied`, matched by `origin.ref`).
+The runner's reserved `mode: "apply"` stays unused: applying happens in the
+project's own CI, not on the server.

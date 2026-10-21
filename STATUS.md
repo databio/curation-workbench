@@ -17,19 +17,39 @@ onto this package and those tests were retired (see "ONGA switchover").
 Also: a toy project with no plugins (`tests/fixtures/toy`) runs regen,
 decisions and a real apply.
 
+## One version (2026-10-21)
+
+There is only the website (curate.databio.org). Local mode is gone: the
+loopback daemon (`cwb serve`, `server.py`), the `wb.routes` hook, the SPA's
+local backend and mode, and `YamlStore`'s create/update/withdraw. Stage 6 above
+(the daemon) is therefore history; its tests were retired. decisions.yaml is
+now only where decisions land: `cwb pull <project>` fetches approved decisions
+(`GET .../decisions/export`, read-only key), appends them renumbered to `DEC-`
+(`store.landing.append_hosted`), and applies them; ONGA's GitHub Action
+(`.github/workflows/curate.yml`) runs it and opens a pull request with
+`GITHUB_TOKEN`. On the next sync, `publish.mark_landed` marks those hosted
+decisions applied. The website's Apply page became **Approved** (waiting
+decisions, held-back ones flagged, how they get to the repo, the Actions link,
+the last-synced commit, recently landed ones, and a curator-only button that
+makes the read-only key). The review home is shorter (cards: title, count,
+question; the per-type `answers:` preview field is gone from review_types.yaml).
+Checked end to end on a laptop (see the jot plan `single_version`).
+Prerequisites before ONGA's Action can run: curation-workbench public, ONGA
+allowing Actions to create pull requests, and the `CURATE_API_KEY` secret.
+
 Storage seam (2026-10-21): decision storage is one interface with two
 backends, the local YAML file (unchanged output, still checked by the tests
 above) and Postgres for the hosted version (projects, votes, hosted `H-`
 decisions, migrations 010-013, export back to `decisions.yaml`). Both run the
 same contract tests (`tests/test_store_contract.py`); Postgres-only behavior is
-in `tests/test_pg_store.py` (`scripts/test-postgres.sh`). `cwb apply` is
-local-only by design: hosted decisions reach the repo through export.
+in `tests/test_pg_store.py` (`scripts/test-postgres.sh`). `cwb apply` works
+only on decisions.yaml: hosted decisions reach it through `cwb pull`.
 
 Sync worker (2026-10-21): regen is split into `snapshot` (everything that
 depends on the repo at one commit; the only place plugin code runs) and
 `derive` (status/review from a bundle plus decisions; generic code).
-Local output is unchanged (byte-identical status.json, and review.json counts
-as before). Hosted mode adds resident projects (`cw_residents`, migration
+`cwb regen` output is unchanged (byte-identical status.json, and review.json
+counts as before). Hosted mode adds resident projects (`cw_residents`, migration
 040), a sync worker that mirrors each resident's repo, builds one snapshot
 per commit in an isolated runner (`cwb runner`, plugins only from a
 superadmin-approved git tree), publishes it to Postgres with the derived
@@ -72,14 +92,13 @@ ONGA now uses this package: its `workbench.yaml` (repo root), plugin
 (`curation/plugin/onga_plugin.py` + `onga_mappings.py`) and
 `curation/review_types.yaml` live in the ONGA repo; `adapters/` is gone. ONGA's
 own engine (`scripts/workbench/` and five scripts) is deleted and its Makefile
-calls `cwb`; `make curate` runs `cwb serve` (the review UI), and ONGA's Astro
+calls `cwb`; `make curate` ran `cwb serve` (now `make curate-pull`, see "One
+version"), and ONGA's Astro
 queue, pending and log pages are gone (its develop pages are read-only). After
 the switch ONGA regenerates byte-identical files apart from `_generated_by`
 (plus the new `curation/review.json`), and its `make test` is the guard.
-`tests/test_onga.py` runs the `--check`s, the daemon's read routes and an
-apply dry run against an ONGA tree. The daemon's CORS support is removed (its
-only client is the same-origin review UI), as are the `/api/subjects`,
-`/api/status` and `/api/review_types` routes the old ONGA pages used.
+`tests/test_onga.py` runs the `--check`s, the review UI's read bodies and an
+apply dry run against an ONGA tree.
 
 Final reproduction run (ONGA `6b38215`, before the switch): all stage tests
 passed, and every review item equalled the ONGA site's `itemsFor()` once the
@@ -101,17 +120,17 @@ annotation, id scheme, examples dir) are now options in `workbench.yaml`.
 
 ## Next
 
-- Review UI (2026-10-21): a React app in `frontend/`, served by `cwb serve`
-  (Review / Apply / More, type pages with one-click answers, subject page with
-  the full decision form, apply with dry run). Items are built in Python
-  (`answers.py`, review.json version 2). ONGA uses it via `make curate`.
+- Review UI (2026-10-21): a React app in `frontend/`, served by `cwb hosted
+  serve` (Review / Approved / More, type pages with one-click answers, subject
+  page with the full decision form). Items are built in Python (`answers.py`,
+  review.json version 2).
 - Register ONGA as the first resident (dev-docs/sync.md).
 - Hosted service (2026-10-21): `cwb hosted serve`, a FastAPI app with
   Prosopia sign-in through vendored snapgate 5.1.0, invite-only accounts
   (pending until a superadmin approves), per-project teams (voter, curator),
   votes and tallies, curators resolving a question into an `H-` decision
   (linked votes, tally as evidence) or no action, team and project admin, and
-  the read routes with the local daemon's bodies (`views`). It reads plan 4's
+  the read routes (`views`). It reads plan 4's
   published snapshots and never runs plugin code; `cwb hosted admin
   dev-snapshot` publishes a local folder in dev. Routes: `hosted/API.md`;
   tests: `tests/hosted/` (postgres tier). Checked end to end locally with

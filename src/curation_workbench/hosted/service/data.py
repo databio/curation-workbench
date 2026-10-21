@@ -1,8 +1,8 @@
-"""Read routes: the same bodies the local daemon returns, built by `views`.
+"""Read routes, built by `views`.
 
 Each function checks read access, loads the project's published data
-(`project_data.load_for`) and calls the `curation_workbench.views` function
-the local daemon calls, with `records` = `derive.merge_decisions(repo
+(`project_data.load_for`) and calls a `curation_workbench.views` function,
+with `records` = `derive.merge_decisions(repo
 decisions from the snapshot, hosted decisions)`. Hosted records carry
 `plugin_errors` from the worker's `decision_checks`.
 """
@@ -83,16 +83,42 @@ def history(engine, caller: Caller, slug: str) -> dict:
     return _read(engine, caller, slug, lambda conn, pd: views.history(all_records(conn, pd), pd.bundle))
 
 
+#: The workflow file a project repo adds to pull approved decisions (ONGA's
+#: `.github/workflows/curate.yml`); the Approved page links to its runs.
+WORKFLOW_FILE = "curate.yml"
+RECENT_APPLIED = 20
+
+
+def repository(pd) -> dict:
+    """Where approved decisions go: the resident's repo, its Actions workflow
+    page (github.com only) and the commit the site last synced."""
+    url = str(pd.repo_url or "")
+    web = url[:-4] if url.endswith(".git") else url
+    github = web.startswith("https://github.com/") and web.count("/") == 4
+    return {"url": web if web.startswith("https://") else None,
+            "workflow_url": f"{web}/actions/workflows/{WORKFLOW_FILE}" if github else None,
+            "commit": pd.commit, "commit_url": f"{web}/commit/{pd.commit}" if github and pd.commit else None,
+            "branch": pd.branch, "synced_at": pd.synced_at}
+
+
 def pending(engine, caller: Caller, slug: str) -> dict:
-    """Pending hosted decisions with the worker's plugin check errors. Hosted
-    mode never dry-runs apply, so there is no `files` key."""
+    """Approved hosted decisions waiting to reach the repo, with the worker's
+    plugin check errors (`views.pending_view`; no `files`: the site never runs
+    the apply engine), plus `applied` (the latest hosted decisions the repo now
+    holds, newest first) and `repository` (where they go)."""
     def fn(conn, pd):
         errors = {k: list(v) for k, v in (pd.decision_checks or {}).items() if v}
-        body = views.pending_view(hosted_records(conn, pd), errors=errors)
+        records = hosted_records(conn, pd)
+        body = views.pending_view(records, errors=errors)
         body.pop("files", None)
+        applied = [r for r in records if r.get("status") == "applied"]
+        applied.sort(key=lambda r: ((r.get("applied") or {}).get("on") or "", r["id"]), reverse=True)
+        body["applied"] = applied[:RECENT_APPLIED]
+        body["repository"] = repository(pd)
         return body
     return _read(engine, caller, slug, fn)
 
 
-__all__ = ["all_records", "findings", "history", "hosted_records", "pending", "review_index",
+__all__ = ["WORKFLOW_FILE", "all_records", "findings", "history", "hosted_records", "pending",
+           "repository", "review_index",
            "review_type", "subject", "subject_index", "verdicts", "with_plugin_errors"]

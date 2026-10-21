@@ -18,7 +18,6 @@ through a hook registered here by a plugin module's `register(wb)`:
         wb.mapping_checks.append(fn)        # (op, negate, ctx) -> [error]
         wb.mapping_fill.append(fn)          # (row, op, negate, table, ctx, new)
         wb.handler_check(kind, verdict, fn)  # (handler, rec, ctx) -> [error]
-        wb.routes.append((method, prefix, fn))  # daemon route; fn(api, tail)
         # review UI hooks, run only at snapshot time; results ride in the bundle
         wb.suggestions.append(fn)           # (wb) -> {finding id: {object, label, source, score, definition}}
         wb.browse_url = fn                  # (wb, subject) -> absolute URL | None
@@ -39,7 +38,7 @@ not read decisions; a signal's `ctx` has no decision data.
 Hosted mode (`open(..., hosted=True)`, used only by the isolated runner): the
 project tree is the checkout, every config path must stay inside it,
 `plugin_dir` is required when plugins are listed, each plugin must be a file
-directly in it, and `apply:`, `wb.routes` and `wb.regen` are ignored (each
+directly in it, and `apply:` and `wb.regen` are ignored (each
 with a warning in `wb.warnings`). Plugins may import only the standard
 library, `yaml`, `ruamel.yaml` and `curation_workbench`; the runner, not this
 code, is the guard.
@@ -75,7 +74,6 @@ class Workbench:
         self.mapping_fill = []
         self.handler_checks = {}
         self.regen = []            # (wb, out_dir) -> None, extra generators run by `cwb regen`
-        self.routes = []           # (method, prefix, fn(api, tail)) extra daemon routes
         self.suggestions = []      # review UI hooks (snapshot time only; see snapshot.py)
         self.browse_url = None
         self.subject_panels = []
@@ -155,9 +153,6 @@ class Workbench:
     def _apply_hosted_rules(self):
         if self.cfg.data.get("apply"):
             self.warnings.append("the apply: section is ignored in hosted mode")
-        if self.routes:
-            self.warnings.append(f"{len(self.routes)} plugin daemon route(s) ignored in hosted mode")
-            self.routes = []
         if self.regen:
             self.warnings.append(f"{len(self.regen)} plugin regen hook(s) ignored in hosted mode")
             self.regen = []

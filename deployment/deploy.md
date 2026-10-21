@@ -3,7 +3,8 @@
 The hosted curation workbench runs at `https://curate.databio.org` on goat, the
 lab's single-node Docker Swarm server, the same way Pigeon does. This file is
 the runbook. Git stays the source of truth for each project's schema; this
-service holds only curation state (people, teams, votes, decisions).
+service holds only curation state (people, teams, votes, decisions) and never
+writes to a project's repo.
 
 ## What runs
 
@@ -194,6 +195,16 @@ them to a project's team (`cwb hosted admin add-member`).
 `cwb db project add`, `cwb hosted resident add`, `plugin-diff`, `approve-plugin`,
 `sync --wait` (see Phase 4 step 3 and `dev-docs/sync.md`). Only a superadmin can
 do this.
+
+## How decisions reach a project's repo
+
+The service holds no git write credential (the worker's optional
+`CWB_GITHUB_READ_TOKEN` is read-only). Each project repo pulls approved
+decisions itself: a GitHub Action in the repo (ONGA's
+`.github/workflows/curate.yml`) runs `cwb pull` with a read-only curate API key
+(repo secret `CURATE_API_KEY`, made by a curator on the project's Approved page)
+and opens a pull request with GitHub's own token. After the merge, the worker's
+next sync marks those decisions applied. Nothing to deploy for this on goat.
 
 ## Plugin safety
 

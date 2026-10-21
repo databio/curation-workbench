@@ -1,6 +1,6 @@
 """The generic path on its own: a tiny LinkML project with no plugins goes
-through regen, decisions and a real apply. Runs on a temp copy of
-tests/fixtures/toy, so nothing in the repo changes."""
+through regen, decisions landed from the hosted site, and a real apply. Runs
+on a temp copy of tests/fixtures/toy, so nothing in the repo changes."""
 import json
 import shutil
 from pathlib import Path
@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from curation_workbench import apply, lint, review, status, store, subjects
+from curation_workbench.store import landing
 from curation_workbench.workbench import Workbench
 
 TOY = Path(__file__).parent / "fixtures" / "toy"
@@ -46,12 +47,15 @@ def test_regen(toy):
 
 
 def record(wb, sid, verdict, op=None, **kw):
+    """A decision as the hosted site exports it, landed in decisions.yaml."""
     subj = store.Subjects.load(wb.cfg.output("subjects.json"))
-    rec = {"subject": sid, "verdict": verdict, "rationale": "test", "decided_by": "tester",
-           "decided_on": "2026-10-21", "operation": {"op": verdict, **op} if op else None,
-           "subject_hashes": {sid: subj.get(sid)["hash"]}, **kw}
-    ctx = store.ValidationContext(subjects=subj, verdicts=store.load_verdicts(wb.cfg.verdicts), wb=wb)
-    return wb.store.create(rec, ctx)
+    n = len(wb.store.records()) + 1
+    rec = {"id": f"H-{n:04d}", "subject": sid, "verdict": verdict, "rationale": "test",
+           "decided_by": "tester", "decided_on": "2026-10-21", "status": "pending",
+           "operation": {"op": verdict, **op} if op else None,
+           "subject_hashes": {sid: subj.get(sid)["hash"]}, "schema_fingerprint": subj.fingerprint,
+           "origin": {"kind": "hosted", "ref": f"H-{n:04d}"}, **kw}
+    landing.append_hosted(wb.cfg.decisions, wb.cfg.decisions, [store.normalize(rec)])
 
 
 def test_apply(toy):

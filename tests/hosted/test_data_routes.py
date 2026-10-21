@@ -1,16 +1,14 @@
-"""Read routes return exactly `views.<fn>(...)` of the published data, and the
-same body as the local daemon (`cwb serve`) for the toy project at the same
-decisions."""
+"""Read routes return exactly `views.<fn>(...)` of the published data; the
+Approved page's body; and hosted decisions that reach the repo get marked
+applied on the next sync."""
 import json
-import threading
-import urllib.request
-from http.server import ThreadingHTTPServer
 
 import pytest
-from .hostedtools import add_repo_decision, publish
+from .hostedtools import add_repo_decision, decision_body, publish
 
-from curation_workbench import derive, server, views
+from curation_workbench import derive, views
 from curation_workbench.hosted import project_data
+from curation_workbench.store import YamlStore, landing
 from curation_workbench.workbench import Workbench
 
 pytestmark = pytest.mark.postgres
@@ -21,23 +19,6 @@ T = "/api/v1/projects/toy"
 @pytest.fixture
 def curator(team, auth_headers):
     return auth_headers(team.curator)
-
-
-@pytest.fixture
-def local(toy_root):
-    """The local daemon on the same toy copy, on a free loopback port."""
-    wb = Workbench.open(toy_root / "workbench.yaml")
-    httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.make_handler(wb, "tester", None))
-    threading.Thread(target=httpd.serve_forever, daemon=True).start()
-    port = httpd.server_address[1]
-
-    def get(path):
-        req = urllib.request.Request(f"http://127.0.0.1:{port}{path}",
-                                     headers={"Host": f"127.0.0.1:{port}"})
-        with urllib.request.urlopen(req) as r:
-            return json.loads(r.read())
-    yield get
-    httpd.shutdown()
 
 
 def test_not_synced_before_a_snapshot(client, make_project, make_user, auth_headers):
@@ -57,7 +38,7 @@ def test_not_synced_before_a_snapshot(client, make_project, make_user, auth_head
     assert r.status_code == 503
 
 
-def test_routes_equal_views_and_local_daemon(client, engine, curator, local, toy_root):
+def test_routes_equal_views(client, engine, curator, toy_root):
     add_repo_decision(toy_root)
     publish(engine, "toy", toy_root)
     with engine.connect() as conn:
@@ -77,17 +58,14 @@ def test_routes_equal_views_and_local_daemon(client, engine, curator, local, toy
         r = client.get(T + path, headers=curator)
         assert r.status_code == 200, (path, r.text)
         assert r.json() == json.loads(json.dumps(body)), path
-        mine = r.json()
-        theirs = local("/api" + path)
-        if path.startswith("/subject?"):
-            mine.pop("votes")
-        if path.startswith("/review"):   # the next id is the store's own: DEC-0002 vs H-0001
-            assert mine.pop("decisions_next_id") == "H-0001"
-            assert theirs.pop("decisions_next_id") == "DEC-0002"
-        assert mine == theirs, path
+    page = client.get(T + "/review/vocabulary/links", headers=curator).json()
+    assert page["decisions_next_id"] == "H-0001"
     assert [h["id"] for h in client.get(T + "/history", headers=curator).json()["history"]] == ["DEC-0001"]
     r = client.get(T + "/pending", headers=curator).json()
-    assert r == {"decisions": [], "errors": {}, "ok": True}       # repo decisions are not hosted ones
+    assert r["decisions"] == [] and r["applied"] == []           # repo decisions are not hosted ones
+    assert r["errors"] == {} and r["ok"] is True
+    assert r["repository"]["url"] is None and r["repository"]["workflow_url"] is None   # a dev: resident
+    assert r["repository"]["commit"] == pd.commit
     assert "files" not in r
     assert client.get(T + "/subject?sid=term:NOPE", headers=curator).status_code == 404
     assert client.get(T + "/review/nope/nope", headers=curator).status_code == 404
@@ -106,7 +84,6 @@ def test_new_snapshot_is_picked_up(client, engine, curator, toy_root):
 
 
 def test_hosted_decisions_in_history_and_pending(client, curator, toy_hash):
-    from .hostedtools import decision_body
     r = client.post(T + "/decisions", json=decision_body(toy_hash), headers=curator)
     assert r.status_code == 201
     hist = client.get(T + "/history", headers=curator).json()["history"]
@@ -115,3 +92,47 @@ def test_hosted_decisions_in_history_and_pending(client, curator, toy_hash):
     assert [d["id"] for d in pend["decisions"]] == ["H-0001"] and pend["decisions"][0]["effects"] is None
     subj = client.get(T + "/subject?sid=term:TOY_0001", headers=curator).json()
     assert [d["id"] for d in subj["decisions"]] == ["H-0001"]
+
+
+def test_landed_decisions_are_marked_applied(client, engine, curator, toy_hash, toy_root):
+    """`cwb pull` lands H-0001 in the repo as DEC-0001; the next sync marks it
+    applied, the Approved page moves it to `applied`, and export stops sending it."""
+    for sid in ("term:TOY_0001", "term:TOY_0002"):
+        assert client.post(T + "/decisions", json=decision_body(toy_hash, sid=sid),
+                           headers=curator).status_code == 201
+    exp = client.get(T + "/decisions/export", headers=curator).json()
+    assert [d["id"] for d in exp["decisions"]] == ["H-0001", "H-0002"] and exp["held"] == []
+    wb = Workbench.open(toy_root / "workbench.yaml")
+    landing.append_hosted(wb.cfg.decisions, wb.cfg.decisions, exp["decisions"][:1])
+    YamlStore(wb.cfg.decisions).mark_applied({"DEC-0001": {
+        "on": "2026-10-22", "subject_hashes_after": {}, "created": [], "retired": []}})
+    publish(engine, "toy", toy_root)
+    with engine.connect() as conn:
+        commit = project_data.load(conn, "toy").commit
+    rec = client.get(T + "/decisions/H-0001", headers=curator).json()["decision"]
+    assert rec["status"] == "applied"
+    assert rec["applied"]["repo_id"] == "DEC-0001" and rec["applied"]["commit"] == commit
+    pend = client.get(T + "/pending", headers=curator).json()
+    assert [d["id"] for d in pend["decisions"]] == ["H-0002"]
+    assert [d["id"] for d in pend["applied"]] == ["H-0001"]
+    assert [d["id"] for d in client.get(T + "/decisions/export", headers=curator).json()["decisions"]] == ["H-0002"]
+    hist = [h["id"] for h in client.get(T + "/history", headers=curator).json()["history"]]
+    assert "H-0001" not in hist and {"DEC-0001", "H-0002"} <= set(hist)
+    assert client.get("/api/v1/projects/toy", headers=curator).json()["decision_counts"]["applied"] == 1
+
+
+def test_export_holds_back_stale_decisions(client, engine, curator, toy_hash):
+    from sqlalchemy import select
+
+    from curation_workbench.store.pg import PgStore
+    from curation_workbench.store.pg.tables import decisions
+    assert client.post(T + "/decisions", json=decision_body(toy_hash), headers=curator).status_code == 201
+    with engine.connect() as conn:
+        pd = project_data.load(conn, "toy")
+    st = PgStore(engine, pd.project["id"])
+    with engine.connect() as conn:
+        row_id = conn.execute(select(decisions.c.id).where(decisions.c.dec_id == "H-0001")).scalar_one()
+    st.set_stale("decision", row_id, pd.snapshot_id, "subject_changed")
+    exp = client.get(T + "/decisions/export", headers=curator).json()
+    assert exp["decisions"] == []
+    assert exp["held"] == [{"id": "H-0001", "reason": "the item changed since it was decided"}]

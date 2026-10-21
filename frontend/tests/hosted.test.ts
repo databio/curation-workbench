@@ -63,8 +63,8 @@ describe('hosted backend', () => {
     expect(await backend.history()).toEqual([{ id: 'H-0001' }]);
     expect(await backend.pending()).toEqual({ decisions: [] });
     expect(await backend.decisions()).toEqual([{ id: 'H-0001' }]);
-    expect(await backend.questions!('vocabulary/links', 'term:A')).toEqual([{ sid: 'term:A' }]);
-    expect(await backend.votes!('term:A', 'vocabulary/links')).toEqual([{ id: 3 }]);
+    expect(await backend.questions('vocabulary/links', 'term:A')).toEqual([{ sid: 'term:A' }]);
+    expect(await backend.votes('term:A', 'vocabulary/links')).toEqual([{ id: 3 }]);
     expect(await backend.team!()).toEqual([{ user_id: 2 }]);
     expect(await backend.approvedUsers!()).toEqual([{ id: 2 }]);
     expect(calls.every((c) => c.method === 'GET' && c.headers.get('Authorization') === 'Bearer tok' && c.body === undefined)).toBe(true);
@@ -101,15 +101,23 @@ describe('hosted backend', () => {
     });
     expect(await backend.decide(draft)).toEqual({ id: 'H-0003' });
     expect(calls[0].body).toEqual(draft);
-    expect(await backend.resolve!({ sid: 'term:A', reviewType: 'v/l', outcome: 'decision', fromVote: 7 })).toEqual({ id: 'H-0004' });
+    expect(await backend.resolve({ sid: 'term:A', reviewType: 'v/l', outcome: 'decision', fromVote: 7 })).toEqual({ id: 'H-0004' });
     expect(calls[1].body).toEqual({ sid: 'term:A', review_type: 'v/l', outcome: 'decision', from_vote: 7 });
-    await backend.resolve!({ sid: 'term:A', reviewType: 'v/l', outcome: 'decision', decision: draft, note: 'n' });
+    await backend.resolve({ sid: 'term:A', reviewType: 'v/l', outcome: 'decision', decision: draft, note: 'n' });
     expect(calls[2].body).toEqual({ sid: 'term:A', review_type: 'v/l', outcome: 'decision', decision: draft, note: 'n' });
-    await backend.resolve!({ sid: 'term:A', reviewType: 'v/l', outcome: 'no_action' });
+    await backend.resolve({ sid: 'term:A', reviewType: 'v/l', outcome: 'no_action' });
     expect(calls[3].body).toEqual({ sid: 'term:A', review_type: 'v/l', outcome: 'no_action' });
     await backend.withdraw(d);
     expect(calls[4].method).toBe('DELETE');
     expect(calls[4].headers.get('If-Match')).toBe('4');
+  });
+
+  it('makeRepoKey: curators only; POST /auth/api-keys with the read scope', async () => {
+    const { backend, calls } = setup({ ['POST /auth/api-keys']: { status: 201, body: { api_key: 'cwb_x', key_info: {} } } });
+    expect(await backend.makeRepoKey!()).toBe('cwb_x');
+    expect(calls[0].body).toMatchObject({ scopes: ['curation:read'] });
+    const voter = createHostedBackend({ ...ME, memberships: { onga: 'voter' } }, PROJECT, vi.fn() as never);
+    expect(voter.makeRepoKey).toBeUndefined();
   });
 
   it('team admin: PUT/DELETE /api/v1/admin/projects/{slug}/team/{user_id}', async () => {
@@ -136,7 +144,7 @@ describe('hosted backend', () => {
   });
 
   it('can comes from /api/v1/me', () => {
-    expect(canFor(ME, 'onga')).toEqual({ vote: true, decide: true, apply: false, export: false, adminTeam: false, adminAccounts: false });
+    expect(canFor(ME, 'onga')).toEqual({ vote: true, decide: true, adminTeam: false, adminAccounts: false });
     expect(canFor({ ...ME, memberships: { onga: 'voter' } }, 'onga')).toMatchObject({ vote: true, decide: false });
     expect(canFor({ ...ME, memberships: {}, site_role: 'superadmin' }, 'onga')).toMatchObject({ vote: false, decide: false, adminTeam: true, adminAccounts: true });
   });

@@ -11,7 +11,7 @@
   hosted.routes        `/api/v1` adapters over the service layer
   hosted.cli           `cwb hosted serve | admin ...` (registered by curation_workbench.cli)
 
-See hosted/API.md. Nothing in this package is imported by local mode or by
-the isolated runner (`cwb` imports `hosted.cli` only to add its parser, and
+See hosted/API.md. Nothing in this package is imported by a base install
+(`cwb pull`, `cwb apply`, `cwb regen`) or by the isolated runner (`cwb` imports `hosted.cli` only to add its parser, and
 that module imports nothing heavy at module level).
 """

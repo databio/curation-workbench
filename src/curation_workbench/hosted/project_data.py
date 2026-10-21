@@ -35,6 +35,7 @@ class ProjectData:
     snapshot_id: int
     commit: str
     branch: str
+    repo_url: str
     schema_fingerprint: str
     synced_at: str
     bundle: dict
@@ -71,19 +72,20 @@ def _bundle(conn, snapshot_id):
 
 
 def sync_info(conn, project_id) -> dict:
-    """{resident_id, snapshot_id, commit, branch, schema_fingerprint, synced_at};
-    all None before the first sync."""
+    """{resident_id, snapshot_id, commit, branch, repo_url, schema_fingerprint,
+    synced_at}; all None before the first sync."""
     row = conn.execute(
-        select(cw_residents.c.id, cw_residents.c.branch, cw_residents.c.current_snapshot_id,
+        select(cw_residents.c.id, cw_residents.c.branch, cw_residents.c.repo_url,
+               cw_residents.c.current_snapshot_id,
                cw_snapshots.c.commit_sha, cw_snapshots.c.schema_fingerprint, cw_snapshots.c.created_at)
         .select_from(cw_residents.outerjoin(cw_snapshots,
                                             cw_snapshots.c.id == cw_residents.c.current_snapshot_id))
         .where(cw_residents.c.project_id == project_id)).one_or_none()
     if row is None:
         return {"resident_id": None, "snapshot_id": None, "commit": None, "branch": None,
-                "schema_fingerprint": None, "synced_at": None}
+                "repo_url": None, "schema_fingerprint": None, "synced_at": None}
     return {"resident_id": row.id, "snapshot_id": row.current_snapshot_id, "commit": row.commit_sha,
-            "branch": row.branch, "schema_fingerprint": row.schema_fingerprint,
+            "branch": row.branch, "repo_url": row.repo_url, "schema_fingerprint": row.schema_fingerprint,
             "synced_at": row.created_at.isoformat() if row.created_at else None}
 
 
@@ -99,6 +101,7 @@ def load_for(conn, project: dict) -> ProjectData:
     bundle, subjects = _bundle(conn, info["snapshot_id"])
     return ProjectData(project=project, resident_id=info["resident_id"],
                        snapshot_id=info["snapshot_id"], commit=info["commit"], branch=info["branch"],
+                       repo_url=info["repo_url"],
                        schema_fingerprint=info["schema_fingerprint"], synced_at=info["synced_at"],
                        bundle=bundle, status=derived.status, review=derived.review,
                        decision_checks=derived.decision_checks or {}, subjects=subjects)

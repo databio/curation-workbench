@@ -74,22 +74,21 @@ Errors under `/auth/` keep snapgate's body `{"detail": {"error", "message"}, "co
 - `GET /api/v1/projects/{slug}` -> `{"slug", "name", "role", "commit", "branch", "schema_fingerprint", "synced_at", "decision_counts": {"pending", "applied", "withdrawn"}, "open_questions"}` (hosted decisions only).
 - `GET /api/v1/projects/{slug}/team` -> `{"members": [{"user_id", "name", "email", "role"}]}`.
 
-## Read routes (team members; same bodies as the local daemon)
+## Read routes (team members)
 
-Each body is the `curation_workbench.views` function the local daemon's route
-of the same name returns (in brackets), from the project's published snapshot,
+Each body is the `curation_workbench.views` function in brackets, from the project's published snapshot,
 its derived status/review, and `records` = the repo's decisions (from the
 snapshot) followed by the hosted ones. SIDs go in the query string. 503
 `not_synced` before the first snapshot.
 
-- `GET .../{slug}/review` [`/api/review`]: review.json without items; each type keeps `sids`.
-- `GET .../{slug}/review/{track}/{type}` [`/api/review/<track>/<type>`]: `{track, type, title, decisions_next_id, items}`; `decisions_next_id` is `H-NNNN`.
-- `GET .../{slug}/subject_index` [`/api/subject_index`].
-- `GET .../{slug}/subject?sid=` [`/api/subject`]: plus `"votes": [Vote]` (current votes on this subject, every review type).
-- `GET .../{slug}/verdicts` [`/api/verdicts`].
-- `GET .../{slug}/findings` [`/api/findings`].
-- `GET .../{slug}/history` [`/api/history`]: repo and hosted decisions, newest first.
-- `GET .../{slug}/pending` [`/api/pending`]: `{"decisions": [pending hosted record + effects: null], "errors": {id: [plugin check error]}, "ok"}`. No `files` key (hosted mode never dry-runs apply).
+- `GET .../{slug}/review` [`review_index`]: review.json without items; each type keeps `sids`.
+- `GET .../{slug}/review/{track}/{type}` [`review_type_page`]: `{track, type, title, decisions_next_id, items}`; `decisions_next_id` is `H-NNNN`.
+- `GET .../{slug}/subject_index` [`subject_index`].
+- `GET .../{slug}/subject?sid=` [`subject_view`]: plus `"votes": [Vote]` (current votes on this subject, every review type).
+- `GET .../{slug}/verdicts` [`verdicts_view`].
+- `GET .../{slug}/findings` [`findings_view`].
+- `GET .../{slug}/history` [`history`]: repo and hosted decisions, newest first.
+- `GET .../{slug}/pending` [`pending_view`]: the Approved page. `{"decisions": [pending hosted record + effects: null], "errors": {id: [plugin check error]}, "ok", "applied": [hosted record], "repository": {"url", "workflow_url", "commit", "commit_url", "branch", "synced_at"}}`. `applied` is the latest 20 hosted decisions that reached the repo (newest first; `applied.repo_id` is the `DEC-` id there, `applied.commit` the commit that brought it); `workflow_url` is `<repo>/actions/workflows/curate.yml` for github.com repos, else null. No `files` key (the site never runs the apply engine).
 
 ## Decisions
 
@@ -102,7 +101,7 @@ checked). Hosted ids are `H-NNNN` per project, `origin: {"kind": "hosted", "ref"
 
 - `GET .../{slug}/decisions[?status=pending]` (member) -> `{"version": 1, "next_id": "H-NNNN", "decisions": [record], "token"}`. Hosted records only.
 - `GET .../{slug}/decisions/{id}` (member) -> `{"decision": record}`.
-- `GET .../{slug}/decisions/export` (member) -> `{"decisions": [plain record]}`: pending hosted decisions without `rev`, vote links or stale marks.
+- `GET .../{slug}/decisions/export` (member; a `curation:read` key is enough) -> `{"decisions": [plain record], "held": [{"id", "reason"}], "commit"}`: what `cwb pull` applies. `decisions` are the approved (pending) hosted decisions that are safe to apply now, oldest first, without `rev`, vote links, stale marks or plugin errors; stale ones and ones that fail the worker's plugin checks are in `held` with a plain reason instead. `commit` is the last-synced commit.
 - `POST .../{slug}/decisions` (curator + `decide`) -> 201 `{"decision": record}`. Body: `subject`, `verdict`, `operation`, `rationale`, `also_affects`, `evidence`, `subject_hashes`, `supersedes` (a hosted `H-` id or a repo `DEC-` id). The server sets `id`, `decided_by` ("Name <email>"), `decided_on` (today), `schema_fingerprint` (current snapshot), `status: pending`, `applied`, `origin`; client values for these are dropped. 400 invalid (the shared validator's messages), 409 a subject changed since `subject_hashes` was read.
 - `PUT .../{slug}/decisions/{id}` (curator + `decide`), header `If-Match: <rev>` (else 428) -> `{"decision": record}`; pending records only; 409 on a stale rev (with `current`).
 - `DELETE .../{slug}/decisions/{id}` (curator + `decide`), `If-Match: <rev>` -> `{"decision": record}` with `status: withdrawn` (records are never removed).

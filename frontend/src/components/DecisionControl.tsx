@@ -1,7 +1,7 @@
 // The full decision form for one subject: any verdict of its kind, with
 // operation fields built from the verdict's field schema (verdicts.yaml).
-// Ported from the first project's Astro DecisionControl.astro. Local: Save is a pending
-// decision. Hosted: voters see "Vote"; curators see "Vote" and "Decide".
+// Ported from the first project's Astro DecisionControl.astro. Voters see
+// "Vote"; curators see "Vote" and "Decide".
 import { useId, useMemo, useState } from 'react';
 import { saveErrorMessage, useBackend } from '../api/backend';
 import type { Action, Decision, DecisionDraft, SubjectIndex, Verdicts } from '../api/types';
@@ -38,7 +38,7 @@ export function latestFor(sid: string, decisions: Decision[]): Decision | undefi
 
 export function DecisionControl({ sid, kind, index, verdicts, findingId, suggestedVerdict, suggestedOperation }: DecisionControlProps) {
   const backend = useBackend();
-  const { can, mode } = backend;
+  const { can } = backend;
   const changed = useChanged();
   const view = useSubject(sid);
   const options = Object.entries(verdicts?.[kind] ?? {}).filter(([, v]) => !v.seed_only);
@@ -100,7 +100,7 @@ export function DecisionControl({ sid, kind, index, verdicts, findingId, suggest
     try {
       if (how === 'decide') {
         const d = await backend.decide(draft);
-        setMsg(mode === 'local' ? `Saved as pending (${d.id}).` : `Decided (${d.id}).`);
+        setMsg(`Decided (${d.id}).`);
       } else {
         const action: Action = {
           label: verdicts?.[kind]?.[verdict]?.label ?? verdict, verdict, operation: draft.operation,
@@ -207,25 +207,16 @@ export function DecisionControl({ sid, kind, index, verdicts, findingId, suggest
       <textarea className="form__input w-full" rows={2} aria-label="Rationale" placeholder="Why? (required)"
         value={rationale} onChange={(e) => setRationale(e.target.value)} />
       <div className="toolbar">
-        {mode === 'local' ? (
-          <button type="button" className="btn btn--sm btn--primary" disabled={!ready}
-            title={ready ? 'Save a pending decision' : 'Choose an action and say why first'} onClick={() => run('decide')}>
-            Save as pending
+        {can.vote ? (
+          <button type="button" className={`btn btn--sm${can.decide ? '' : ' btn--primary'}`} disabled={!ready} onClick={() => run('vote')}>
+            Vote
           </button>
-        ) : (
-          <>
-            {can.vote ? (
-              <button type="button" className={`btn btn--sm${can.decide ? '' : ' btn--primary'}`} disabled={!ready} onClick={() => run('vote')}>
-                Vote
-              </button>
-            ) : null}
-            {can.decide ? (
-              <button type="button" className="btn btn--sm btn--primary" disabled={!ready} onClick={() => run('decide')}>
-                Decide
-              </button>
-            ) : null}
-          </>
-        )}
+        ) : null}
+        {can.decide ? (
+          <button type="button" className="btn btn--sm btn--primary" disabled={!ready} onClick={() => run('decide')}>
+            Decide
+          </button>
+        ) : null}
         {can.decide && latest?.status === 'pending' ? (
           <button type="button" className="btn btn--sm" onClick={withdraw}>
             Withdraw

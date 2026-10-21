@@ -1,12 +1,11 @@
-// Project title, then Review / Apply / More; on the right, the mode chip
-// (local: branch and who decides; hosted: the account menu and role).
+// Project title, then Review / Approved / More; on the right, the person's
+// role and account menu.
 import { useEffect, useRef, useState } from 'react';
 import { Link, NavLink, useLocation } from 'react-router';
 import { useBackend } from '../api/backend';
 import { UserMenu } from '../snapgate';
 import { useDecisions, useReview } from '../hooks/useData';
-import { useResource } from '../hooks/useResource';
-import { allPath, applyPath, findingsPath, historyPath, morePath, projectPath, teamPath } from '../lib/paths';
+import { allPath, approvedPath, findingsPath, historyPath, morePath, projectPath, teamPath } from '../lib/paths';
 
 const navClass = ({ isActive }: { isActive: boolean }) => `nav__link${isActive ? ' nav__link--active' : ''}`;
 
@@ -36,28 +35,8 @@ function MoreMenu() {
   );
 }
 
-function LocalChip() {
-  const backend = useBackend();
-  const health = useResource([backend.project.slug, 'health'], () => backend.health!(), { enabled: !!backend.health });
-  const h = health.data;
-  return (
-    <span className="mode-chip" title={`Local mode: your answers are written to this checkout's decisions.yaml${h ? ` on branch ${h.git_branch}` : ''}.${h?.working_tree_dirty ? ' "uncommitted changes" means the checkout has edits not committed yet.' : ''}`}>
-      Local{h ? ` · branch ${h.git_branch}` : ''} · {backend.me.name}
-      {h?.working_tree_dirty ? <span className="mode-chip__dirty"> · uncommitted changes</span> : null}
-    </span>
-  );
-}
-
-export function StaleBar() {
-  const backend = useBackend();
-  const review = useReview();
-  const health = useResource([backend.project.slug, 'health'], () => backend.health!(), { enabled: !!backend.health });
-  if (!review.data || !health.data || review.data.schema_fingerprint === health.data.schema_fingerprint) return null;
-  return <div className="stale-bar" role="alert">The schema changed after these lists were built. Rebuild them (<code>cwb regen</code>) and reload.</div>;
-}
-
 export function NavBar() {
-  const { project, mode, me } = useBackend();
+  const { project, me } = useBackend();
   const { pathname } = useLocation();
   const home = projectPath(project.slug);
   const onReview = pathname === home || pathname.startsWith(`${home}/review/`);
@@ -67,8 +46,8 @@ export function NavBar() {
   const links = (
     <>
       <NavLink to={home} end className={() => navClass({ isActive: onReview })}>Review</NavLink>
-      <NavLink to={applyPath(project.slug)} className={navClass}>
-        Apply{pending ? <span className="nav__count" data-testid="pending-count">{pending}</span> : null}
+      <NavLink to={approvedPath(project.slug)} className={navClass}>
+        Approved{pending ? <span className="nav__count" data-testid="pending-count">{pending}</span> : null}
       </NavLink>
       <MoreMenu />
     </>
@@ -82,15 +61,12 @@ export function NavBar() {
           Menu
         </button>
         <span className="nav__spacer" />
-        {mode === 'local' ? <LocalChip /> : (
-          <span className="toolbar">
-            {me.role ? <span className="badge badge--neutral">{me.role}</span> : null}
-            <UserMenu badge={null} />
-          </span>
-        )}
+        <span className="toolbar">
+          {me.role ? <span className="badge badge--neutral">{me.role}</span> : null}
+          <UserMenu badge={null} />
+        </span>
       </nav>
       {open ? <div className="nav__mobile-links">{links}</div> : null}
-      {mode === 'local' ? <StaleBar /> : null}
     </>
   );
 }

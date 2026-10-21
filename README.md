@@ -4,17 +4,20 @@ A decision-driven curation workbench for [LinkML](https://linkml.io/) schemas
 and [SSSOM](https://mapping-commons.github.io/sssom/) mappings.
 
 Every reviewable piece of a schema (term, enum, class, slot, slot usage,
-subset, module) gets a permanent subject id and a content hash. Curators record
-**decisions** about subjects (keep, rename, merge, adopt a mapping, set a
-field's cardinality, ...) in a plain YAML log. An **apply** step turns pending
-decisions into edits of the schema and mapping files, all or nothing, and
-stamps each decision as applied. Automatic **lint** findings and a ranked
-**queue** say what to look at next, and **review types** split that queue into
-kinds of work with one question each.
+subset, module) gets a permanent subject id and a content hash. Automatic
+**lint** findings and a ranked **queue** say what to look at next, and
+**review types** split that queue into kinds of work with one question each.
 
-In local mode everything is plain files in git and there is no database. A
-hosted, multi-user mode keeps people, teams, votes and hosted decisions in
-Postgres; see [Hosted mode](#hosted-mode) and [Storage](#storage).
+There is one version: the website at https://curate.databio.org. Team members
+sign in, answer review questions (each answer is a **vote**), and curators turn
+votes into **decisions** (keep, rename, merge, adopt a mapping, set a field's
+cardinality, ...). The schema stays in the project's own git repository, and
+the website never writes to it. Approved decisions reach the repo through a
+GitHub Action in the project repo (or `cwb pull` on a laptop), which runs the
+**apply** step: edit the schema and mapping files, all or nothing, run the
+project's checks, and record each decision in the repo's
+`curation/decisions.yaml`, the permanent log. See
+[How decisions reach the repository](#how-decisions-reach-the-repository).
 
 It was extracted from ONGA (Ontology of Genomic Annotations), which is its
 first project; see [Residents](#residents).
@@ -37,8 +40,8 @@ cwb -c workbench.yaml review [--check]     # review.json: queue sorted into revi
 cwb -c workbench.yaml regen [--check]      # all of the above, in order
 cwb -c workbench.yaml snapshot [--out F]   # the commit-phase bundle as JSON (see below)
 cwb derive --snapshot F --decisions D [--out DIR]  # status.json + review.json from a bundle
-cwb -c workbench.yaml apply [--dry-run] [--ids DEC-0001 ...] [--emit pending.json]
-cwb -c workbench.yaml serve [--port 8781] [--ui DIR]  # local daemon + review UI (loopback only)
+cwb -c workbench.yaml pull [PROJECT] [--url URL] [--summary F]  # approved decisions from the site, applied here
+cwb -c workbench.yaml apply [--dry-run] [--ids DEC-0001 ...] [--emit pending.json]  # records already in decisions.yaml
 ```
 
 Global flags: `--root` (the project tree; overrides the config) and `--out`
@@ -49,10 +52,11 @@ Regen runs in two phases. `snapshot` computes everything that depends only on
 the repo at one commit (subjects, aliases, lint and plugin findings, every
 queue signal) into one JSON bundle; it is the only place plugin code runs.
 `derive` turns a bundle plus a decision list into status.json and review.json
-with no plugin calls. `cwb regen` is the two in a row, and the daemon keeps
-one bundle in memory and re-derives status on each request.
+with no plugin calls. `cwb regen` is the two in a row; the website's sync
+worker keeps one bundle per commit and re-derives status after every vote or
+decision.
 
-Hosted mode adds (needs the `hosted` extra; see `dev-docs/sync.md`):
+The website's services (need the `hosted` extra; see `dev-docs/sync.md`):
 
 ```bash
 cwb runner [--port 8150]                     # the isolated runner: all repo code runs here
@@ -67,9 +71,9 @@ cwb hosted admin add-member --project onga --email E --role voter|curator
 cwb hosted admin dev-snapshot --project toy --config tests/fixtures/toy/workbench.yaml  # dev only
 ```
 
-## Hosted mode
+## The website
 
-A multi-user version of the review UI at `https://curate.databio.org`
+The review site at `https://curate.databio.org`
 (`cwb hosted serve`, a FastAPI app in `curation_workbench.hosted`). People sign
 in with their **Prosopia** account through vendored snapgate (`src/snapgate`,
 the same wiring as Pigeon). It is invite-only:
@@ -85,9 +89,8 @@ the same wiring as Pigeon). It is invite-only:
 Team members **vote** on review questions (one subject in one review type);
 **curators** read the vote counts and turn a question into a real decision
 (or close it with no action). Votes never become decisions on their own.
-Hosted decisions get `H-NNNN` ids and go back to the repo as a pull request
-through `cwb db export`. The schema stays in git and the service never edits
-it: each project's generated data (the snapshot bundle and the derived
+Decisions made here get `H-NNNN` ids. The schema stays in git and the service
+never edits it, and it holds no git write credentials (see the next section): each project's generated data (the snapshot bundle and the derived
 status and review queue) comes from plan 4's sync worker (`cwb hosted
 worker`, dev-docs/sync.md), which the API reads from Postgres. The API never
 runs plugin code. Agents use API keys (`Authorization: Bearer cwb_...`, made
@@ -113,7 +116,40 @@ A production boot refuses `DEMO_LOGIN`/`DEBUG`, snapgate's test secrets, an
 http public URL, an `OIDC_REDIRECT_URI` outside `CWB_PUBLIC_URL`, a
 `FRONTEND_URL` other than it, and an empty superadmin list.
 
-Dev run (a local Postgres, the toy project, demo sign-in instead of Prosopia):
+### How decisions reach the repository
+
+1. Curators approve decisions on the site. The **Approved** page lists the
+   ones waiting, holds back any whose item changed since (stale) or that fail
+   the project's checks, links to the repo's Actions workflow and shows the
+   last-synced commit.
+2. A GitHub Action in the project repo (ONGA's `.github/workflows/curate.yml`,
+   by hand or daily) runs `cwb pull <project>` with a read-only API key from
+   the repo secret `CURATE_API_KEY`, then opens or updates one pull request
+   (branch `curate/approved-decisions`) with GitHub's own `GITHUB_TOKEN`.
+3. `cwb pull` fetches `GET /api/v1/projects/<slug>/decisions/export`, skips
+   decisions the checkout already has, appends the rest to
+   `curation/decisions.yaml` renumbered to `DEC-` ids (each keeps
+   `origin: {kind: hosted, ref: <H- id>}`), leaves out any the apply engine
+   refuses (listed in the summary), and applies the rest with `cwb apply`
+   (edits, regen, the config's `verify` commands). Nothing is committed; on
+   any failure every file goes back. On a laptop it is the same command.
+4. After the pull request is merged, the sync worker publishes the new commit
+   and marks each decision it finds there (by `origin.ref`) as applied, with
+   its `DEC-` id and the commit. The Approved page moves it to "Reached the
+   repository".
+
+Setting it up for a project: the repo installs curation-workbench in its
+Action (ONGA clones `https://github.com/databio/curation-workbench`, which
+must be public); the repo allows Actions to create pull requests (Settings ->
+Actions -> General); a curator clicks **Make a key for the repository** on the
+Approved page (a `curation:read` key) and stores it as the repo secret
+`CURATE_API_KEY`. The key belongs to that curator: it stops working if they
+leave the team or revoke it.
+
+### Running it locally (development)
+
+The same app, on a laptop: a throwaway Postgres, the toy project, demo sign-in
+instead of Prosopia:
 
 ```bash
 uv venv && uv pip install -e ".[hosted,test]"
@@ -137,8 +173,15 @@ snapshot in-process and publishes it to a disabled `dev:<path>` resident
 exactly as a real sync does. To try real Prosopia sign-in locally, set the
 `OIDC_*` variables to the `curate` Prosopia client (its redirect URIs include
 `http://127.0.0.1:8134/auth/login/callback`) and drop `DEMO_LOGIN`.
-`cwb serve` (local mode) is untouched. Tests: `scripts/test-postgres.sh`
-runs `tests/hosted/` (every hosted test needs a database).
+Tests: `scripts/test-postgres.sh` runs `tests/hosted/` (every hosted test
+needs a database).
+
+To try a real repository end to end, register a resident that points at a
+local bare clone (`CWB_ALLOW_FILE_REPOS=1 cwb hosted resident add --repo
+file:///path/to/clone.git ...`), run the worker and the runner (`cwb runner`,
+`CWB_RUNNER_URL=http://127.0.0.1:8150`), and run `cwb pull` in a checkout of
+that clone with `CWB_URL=http://127.0.0.1:8134` and a key made on the
+Approved page.
 
 **Hosted deploy.** The service runs at https://curate.databio.org on goat (one
 image, three services: API, sync worker, isolated runner). The image,
@@ -221,7 +264,6 @@ everything project-specific goes through these hooks:
 | `wb.mapping_checks` | `(op, negate, ctx) -> [error]` | SSSOM adopt/reject |
 | `wb.mapping_fill` | `(row, op, negate, table, ctx, new)` | SSSOM adopt/reject |
 | `wb.protected_names` | `(ctx, section) -> {name: reason}` | class/enum rename, move, delete |
-| `wb.routes` | `(method, prefix, fn(api, tail))` | daemon |
 | `wb.regen` | `(wb, out_dir)` | `cwb regen`, in-process apply regen |
 | `wb.suggestions` | `(wb) -> {finding id: {object, label, source, score, definition}}` | review UI: `links` answers (bundle `suggestions`) |
 | `wb.browse_url` | `(wb, subject) -> url \| None` (one function, not a list) | review UI: "view in schema site" (bundle `browse`) |
@@ -232,52 +274,48 @@ Signals and findings are computed once per commit, so they may not read
 decisions: a signal's `ctx` has `wb`, `subjects` and `labels`, nothing else.
 The four review UI hooks also run only at snapshot time (`snapshot.review_hooks`);
 while they run, `wb.snapshot_view` is `{subjects, labels, signals}` (signals
-unmasked, no decisions). Their output rides in the bundle, so derive, the
-daemon's request handlers and the hosted API run no plugin code.
+unmasked, no decisions). Their output rides in the bundle, so derive and the
+website's API run no plugin code.
 
 **Hosted mode** (plugins run only in the isolated runner, and only from a
 plugin tree a superadmin approved): `plugin_dir` is required when `plugins`
 is non-empty; each plugin must be a module file directly in it, and helper
 modules it imports must sit beside it (and be imported at module top level);
-every config path must stay inside the repo; `apply:`, `wb.routes` and
-`wb.regen` are ignored with a warning. Plugins may import only the standard
+every config path must stay inside the repo; `apply:` and `wb.regen` are
+ignored with a warning. Plugins may import only the standard
 library, `yaml`, `ruamel.yaml` and `curation_workbench`.
 
 ## Review UI
 
 A React app (`frontend/`, the house stack: React 19, react-router 7, Vite 8)
-that `cwb serve` serves from the same port as its API. Build it once (needs
-Node >= 20.19); the build lands in `src/curation_workbench/web/` (gitignored,
-shipped as package data), so running it needs no Node:
+that `cwb hosted serve` serves with an SPA fallback. Build it once (needs Node
+>= 20.19); the build lands in `src/curation_workbench/web/` (gitignored,
+shipped as package data):
 
 ```bash
 npm --prefix frontend ci && npm --prefix frontend run build   # style guard + tsc + vite
-cwb -c workbench.yaml serve                                    # open http://127.0.0.1:8781/
-npm --prefix frontend run dev        # dev loop: Vite on :5190, proxies /api to the daemon
+npm --prefix frontend run dev        # dev loop: Vite on :5190, proxies to the API on :8134
 npm --prefix frontend test           # Vitest
 ```
 
 Menu: **Review** (one card per review type; each type page lists its items
-with one-click answers), **Apply** (pending decisions, dry run, apply all),
-**More** (History, All items, Findings, and the project's `more_links`). A
-subject page has the full decision form. Without a build the daemon serves
-the API only and says so.
+with one-click answers, which are votes), **Approved** (curator decisions
+waiting to reach the repository), **More** (History, All items, Findings,
+Team, and the project's `more_links`). A subject page has the full decision
+form.
 
 The browser has no answer logic and names no project: `cwb review` builds
 every item (title, plain-language reasons, choices, ready-made answers) in
-`answers.py` from the snapshot bundle, and the daemon's read routes return
-bodies built by `views.py` (the hosted API calls the same functions). One
-bundle serves both modes, picked at run time from `GET /api/config`; hosted
-mode (votes, tallies, curator decisions, team admin) talks only through
-`frontend/src/api/hosted.ts`. The hosted service (`cwb hosted serve`) serves
-the same `web/` folder with an SPA fallback; for hosted dev run Vite with
-`VITE_DEV_BACKEND=http://127.0.0.1:8134`.
+`answers.py` from the snapshot bundle, and the API's read routes return
+bodies built by `views.py`. Only `frontend/src/api/hosted.ts` knows the routes.
 
 ### review_types.yaml (version 2)
 
 ```yaml
 version: 2                 # required; version 1 files are refused
 title: MyProject           # display name; `{project}` in default answer rationales
+                           # (each type: id, title, question, help (one short line), rules,
+                           #  answers_kind, fallback)
 reasons:                   # finding rule -> plain words on review rows
   unmapped-high-usage:
     pattern: 'has (?P<n>\d+) files'   # Python regex searched in the message
@@ -304,21 +342,21 @@ operation, also and evidence) that hosted votes are counted by.
 
 ## Storage
 
-Decisions go through one interface (`curation_workbench.store`) with two
-backends. Both call the same validator (`store.validate`, `store.validate_vote`);
-neither has rules of its own.
+Decisions are made in one place and recorded in another
+(`curation_workbench.store`); both use the same validator (`store.validate`,
+`store.validate_vote`).
 
-- **Local mode (default):** `YamlStore`, the project's `curation/decisions.yaml`.
-  It mints `DEC-NNNN` ids and writes the file exactly as before. Optimistic
-  concurrency is whole-file (`mtime_ns`, the daemon's `X-Store-Mtime` header).
-  `cwb apply` runs only against this store.
-- **Hosted mode:** `PgStore(engine, project_id)`, Postgres through psycopg 3.
+- **Where decisions are made:** `PgStore(engine, project_id)`, Postgres through psycopg 3.
   It holds projects, votes and hosted decisions only. Hosted ids are `H-NNNN`
   per project with `origin: {kind: hosted, ref: <own id>}`, so they never
   collide with a repo's `DEC-` ids. Each record and vote has a `rev` for
   compare-and-swap; the project's `decisions_rev` is the store-wide token.
   The repo's own decisions are never imported (the hosted service reads them
   from the project snapshot).
+- **Where they are recorded:** `YamlStore`, the repo's `curation/decisions.yaml`.
+  It has no create, edit or withdraw: records arrive through
+  `store.landing.append_hosted` (`cwb pull`, `cwb db export`), and the apply
+  engine stamps them applied (`mark_applied`). `cwb apply` runs only on it.
 
 Connection: `CWB_DATABASE_URL` (`postgresql+psycopg://...`; bare
 `postgresql://` is rewritten to it, `+psycopg2` is refused), else
@@ -334,11 +372,11 @@ cwb db export --project onga --template curation/decisions.yaml -o out.yaml [--i
 scripts/test-postgres.sh                    # postgres tests in a throwaway container (port 55437)
 ```
 
-**Export** (the seam for sending hosted decisions back as a pull request):
-`export_yaml` appends a project's pending hosted decisions to a copy of the
-repo's `decisions.yaml`, renumbered into its `DEC-` sequence; each keeps
-`origin.ref` = its old `H-` id. With nothing to export the output is
-byte-identical to the input.
+**Export**: `append_hosted` (used by `cwb pull`, and by `cwb db export` through
+`export_yaml`) appends hosted decisions to a copy of the repo's
+`decisions.yaml`, renumbered into its `DEC-` sequence; each keeps `origin.ref`
+= its old `H-` id. With nothing to append the output is byte-identical to the
+input.
 
 **Migrations** live in `deployment/migrations/` (override: `CWB_MIGRATIONS_DIR`),
 one numbered file each, applied once by `cwb db migrate` and recorded in
@@ -365,8 +403,8 @@ helper `curation/plugin/onga_mappings.py`, and `curation/review_types.yaml`.
 ONGA depends on this repo as a path dependency (`../curation-workbench`), and
 its `make test` is the guard: its committed outputs are the golden files.
 
-`tests/test_onga.py` runs the same `--check`s from here, plus the daemon's read
-routes and an apply dry run on a disposable worktree:
+`tests/test_onga.py` runs the same `--check`s from here, plus the review UI's
+read bodies and an apply dry run on a disposable worktree:
 
 ```bash
 ONGA_ROOT=../onga pytest -q tests/test_onga.py                 # read-only

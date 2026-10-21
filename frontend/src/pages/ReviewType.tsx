@@ -1,10 +1,9 @@
 // One review type's page: its question, then every item of that type with
-// ready-made answers (ReviewItem). Items with a `group` (sign-off) render
+// ready-made answers (ReviewItem); each click is a vote. Items with a `group` (sign-off) render
 // under group headings with "Approve all in {group}".
 import { useCallback, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router';
 import { saveErrorMessage, useBackend } from '../api/backend';
-import { doneBy } from '../api/doneState';
 import type { Answer, Item } from '../api/types';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { LazyList } from '../components/LazyList';
@@ -28,7 +27,7 @@ const approveAction = (item: Item) => item.actions.find((a) => a.verdict === 'ke
 export default function ReviewType() {
   const { track = '', type = '' } = useParams();
   const backend = useBackend();
-  const { mode, project, can } = backend;
+  const { project, can } = backend;
   const reviewType = `${track}/${type}`;
   const page = useReviewType(track, type);
   const index = useSubjectIndex();
@@ -42,20 +41,15 @@ export default function ReviewType() {
   const [approving, setApproving] = useState<{ group: string; rows: Item[] } | null>(null);
   const [progress, setProgress] = useState('');
 
-  const nextId = page.data?.decisions_next_id ?? null;
   const states = useMemo(() => {
     const out = new Map<string, RowState>();
     for (const it of page.data?.items ?? []) {
-      if (mode === 'local') {
-        out.set(it.sid, { decision: doneBy(it, decisions.data ?? [], nextId) });
-      } else {
-        const q = (questions.data ?? []).find((x) => x.sid === it.sid && x.review_type === reviewType) ?? null;
-        const resolved = q?.decision_id ? (decisions.data ?? []).find((d) => d.id === q.decision_id) ?? null : null;
-        out.set(it.sid, { question: q, mine: q?.mine ?? null, resolved });
-      }
+      const q = (questions.data ?? []).find((x) => x.sid === it.sid && x.review_type === reviewType) ?? null;
+      const resolved = q?.decision_id ? (decisions.data ?? []).find((d) => d.id === q.decision_id) ?? null : null;
+      out.set(it.sid, { question: q, mine: q?.mine ?? null, resolved });
     }
     return out;
-  }, [page.data, decisions.data, questions.data, nextId, mode, reviewType]);
+  }, [page.data, decisions.data, questions.data, reviewType]);
 
   const onChanged = useCallback((sid: string, _a: Answer | null) => {
     setTouched((t) => new Set(t).add(sid));
@@ -97,17 +91,16 @@ export default function ReviewType() {
     changed();
   }
 
-  const answered = mode === 'hosted' && !can.decide ? 'answered' : 'decided';
-  const hint = mode === 'local'
-    ? 'Click one answer per item. It is saved as a pending decision; nothing changes until you apply, and Undo is one click.'
-    : can.decide
-      ? 'Click one answer per item to vote. Under a row with votes, "Decide from tally" turns them into a decision.'
-      : 'Click one answer per item. It is your vote; curators turn votes into decisions.';
+  const answered = can.decide ? 'decided' : 'answered';
+  const hideLabel = can.decide ? 'Hide decided' : 'Hide ones I answered';
+  const hint = can.decide
+    ? 'Click one answer per item to vote. Under a row with votes, "Decide from tally" turns them into a decision.'
+    : 'Click one answer per item. It is your vote; curators turn votes into decisions.';
   const emptyText = items.length === 0
     ? 'No items of this kind right now.'
     : search.trim()
       ? 'Nothing here matches your search.'
-      : `All ${items.length} items here are ${answered}. Untick "${mode === 'hosted' && !can.decide ? 'Hide ones I answered' : 'Hide decided'}" to see them.`;
+      : `All ${items.length} items here are ${answered}. Untick "${hideLabel}" to see them.`;
   return (
     <QueryState isPending={page.isPending} error={page.error} onRetry={page.refetch}>
       {page.data ? (
@@ -127,7 +120,7 @@ export default function ReviewType() {
               </span>
               <label className="form__choice">
                 <input type="checkbox" checked={hideDone} onChange={(e) => setHideDone(e.target.checked)} />{' '}
-                {mode === 'hosted' && !can.decide ? 'Hide ones I answered' : 'Hide decided'}
+                {hideLabel}
               </label>
               <input type="search" className="form__input form__input--md" placeholder="Search…" aria-label="Search"
                 value={search} onChange={(e) => setSearch(e.target.value)} />
@@ -170,7 +163,7 @@ export default function ReviewType() {
           <ConfirmDialog
             isOpen={!!approving}
             title="Approve all"
-            message={approving ? `Approve all ${approving.rows.length} undecided items in ${approving.group} as "looks right"? Each one is saved as its own ${mode === 'local' ? 'pending decision' : 'vote'}.` : ''}
+            message={approving ? `Approve all ${approving.rows.length} undecided items in ${approving.group} as "looks right"? Each one is saved as your vote.` : ''}
             confirmLabel="Approve all"
             onCancel={() => setApproving(null)}
             onConfirm={async () => {

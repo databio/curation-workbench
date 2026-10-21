@@ -7,8 +7,9 @@
     cwb -c workbench.yaml regen [--check]        subjects, lint, status, review, in order
     cwb -c workbench.yaml snapshot [--out F]     the commit-phase bundle as JSON (stdout or F)
     cwb derive --snapshot F --decisions D [--out DIR]   status.json + review.json from a bundle
-    cwb -c workbench.yaml apply [--dry-run] [--ids DEC-0001 ...]
-    cwb -c workbench.yaml serve [--port 8781] [--ui DIR]  local decision daemon + review UI
+    cwb -c workbench.yaml apply [--dry-run] [--ids DEC-0001 ...]   apply records already in decisions.yaml
+    cwb -c workbench.yaml pull [PROJECT] [--url URL] [--summary F]  fetch approved decisions from
+                                                 the hosted site and apply them here (CURATE_API_KEY)
 
     cwb db migrate                               apply pending database migrations
     cwb db status                                pending / unknown migrations, missing schema
@@ -188,10 +189,9 @@ def cmd_apply(wb, args):
     return apply.main(wb, dry_run=args.dry_run, ids=args.ids or None, emit_path=args.emit)
 
 
-def cmd_serve(wb, args):
-    from . import server
-    server.serve(wb, host=args.host, port=args.port, ui_dir=args.ui)
-    return 0
+def cmd_pull(wb, args):
+    from . import pull
+    return pull.main(wb, project=args.project, url=args.url, summary_path=args.summary)
 
 
 # ---------------------------------------------------------------- cwb db
@@ -310,11 +310,11 @@ def main(argv=None):
     p.add_argument("--ids", nargs="*")
     p.add_argument("--emit", metavar="PATH", help="write the staged diff and effects as JSON")
     p.set_defaults(fn=cmd_apply)
-    p = sub.add_parser("serve")
-    p.add_argument("--host", default="127.0.0.1")
-    p.add_argument("--port", type=int, default=8781)
-    p.add_argument("--ui", help="built review UI folder (default: the packaged curation_workbench/web)")
-    p.set_defaults(fn=cmd_serve)
+    p = sub.add_parser("pull", help="fetch approved decisions from the hosted site and apply them here")
+    p.add_argument("project", nargs="?", help="hosted project slug (default: workbench.yaml's project)")
+    p.add_argument("--url", help="hosted site (default: $CWB_URL or https://curate.databio.org)")
+    p.add_argument("--summary", metavar="PATH", help="also write a Markdown summary (the PR body)")
+    p.set_defaults(fn=cmd_pull)
     p = sub.add_parser("snapshot", help="write the commit-phase bundle as JSON")
     p.add_argument("--out", dest="file", help="write the bundle here instead of stdout")
     p.set_defaults(fn=cmd_snapshot)

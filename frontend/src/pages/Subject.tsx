@@ -126,7 +126,7 @@ export function DecisionRow({ d, sid, label }: { d: Decision; sid: string; label
 
 export default function Subject() {
   const { slug = '' } = useParams();
-  const { project, can, mode } = useBackend();
+  const { project, can } = useBackend();
   const index = useSubjectIndex();
   const review = useReview();
   const sid = index.data ? Object.entries(index.data).find(([, r]) => r.slug === slug)?.[0] : undefined;
@@ -280,7 +280,7 @@ export default function Subject() {
 
             <aside className="stack">
               <section className="card">
-                <h2 className="card__title">{mode === 'local' ? 'Record a decision' : can.decide ? 'Vote or decide' : 'Vote'}</h2>
+                <h2 className="card__title">{can.decide ? 'Vote or decide' : 'Vote'}</h2>
                 {rec.retired ? (
                   <p className="muted text-sm m-0">Retired items take no new decisions.</p>
                 ) : can.decide || can.vote ? (

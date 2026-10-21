@@ -1,8 +1,7 @@
 // One row of a review type's page. Shows the subject in plain terms (name,
 // where it lives, its definition, why it is here) and the type's ready-made
-// answers as buttons. Local mode: a click saves a pending decision. Hosted
-// mode: a click is a vote; curators also see the tally and can turn it into
-// a decision. Anything the buttons don't cover is one link away on the
+// answers as buttons. A click is a vote; curators also see the tally and can
+// turn it into a decision. Anything the buttons don't cover is one link away on the
 // subject page. Layout and save flow ported from ReviewItem.astro.
 import { memo, useState } from 'react';
 import { Link } from 'react-router';
@@ -14,13 +13,11 @@ import { subjectPath } from '../lib/paths';
 import { ConfirmDialog } from './ConfirmDialog';
 
 export interface RowState {
-  /** Local: the decision made since the build that answers this row. */
-  decision?: Decision | null;
-  /** Hosted: my vote on this row's question. */
+  /** My vote on this row's question. */
   mine?: MyVote | null;
-  /** Hosted: the row's question (tally), when it has votes or a resolution. */
+  /** The row's question (tally), when it has votes or a resolution. */
   question?: Question | null;
-  /** Hosted: the decision a curator made from the question. */
+  /** The decision a curator made from the question. */
   resolved?: Decision | null;
 }
 
@@ -35,9 +32,9 @@ interface ReviewItemProps {
 
 const TONE: Record<string, string> = { primary: 'btn btn--sm btn--primary', neutral: 'btn btn--sm', danger: 'btn btn--sm btn--danger-outline' };
 
-/** Is the row answered (by my decision, my current vote, or a curator's resolution)? */
+/** Is the row answered (by my current vote, or a curator's resolution)? */
 export function rowDone(s: RowState): boolean {
-  return !!(s.decision || (s.mine && !s.mine.stale) || s.resolved || s.question?.state === 'resolved');
+  return !!((s.mine && !s.mine.stale) || s.resolved || s.question?.state === 'resolved');
 }
 
 /** `{field: value}` pairs of an operation as a short inline list. */
@@ -57,7 +54,7 @@ export function OperationSummary({ op, className = '' }: { op: Record<string, un
 
 function ReviewItemInner({ item, reviewType, index, state, onChanged }: ReviewItemProps) {
   const backend = useBackend();
-  const { can, mode, project } = backend;
+  const { can, project } = backend;
   const verdicts = useVerdicts();
   const [note, setNote] = useState('');
   const [editor, setEditor] = useState(item.editor?.value ?? '');
@@ -80,10 +77,10 @@ function ReviewItemInner({ item, reviewType, index, state, onChanged }: ReviewIt
       return;
     }
     setSaving(true);
-    setMsg(mode === 'hosted' ? 'Voting…' : 'Saving…');
+    setMsg('Voting…');
     try {
       const answer = await backend.answer(
-        { sid: item.sid, reviewType, action, hash: item.hash, comment: mode === 'hosted' ? note.trim() || undefined : undefined },
+        { sid: item.sid, reviewType, action, hash: item.hash, comment: note.trim() || undefined },
         built.draft,
       );
       setMsg('');
@@ -103,10 +100,7 @@ function ReviewItemInner({ item, reviewType, index, state, onChanged }: ReviewIt
 
   async function undo() {
     try {
-      if (state.decision) await backend.undo({ kind: 'decision', decision: state.decision });
-      else if (state.mine) {
-        await backend.undo({ kind: 'vote', vote: { sid: item.sid, review_type: reviewType } as Vote });
-      }
+      if (state.mine) await backend.undo({ kind: 'vote', vote: { sid: item.sid, review_type: reviewType } as Vote });
       onChanged(item.sid, null);
     } catch (e) {
       setMsg(`Not undone: ${(e as Error).message}`);
@@ -150,7 +144,7 @@ function ReviewItemInner({ item, reviewType, index, state, onChanged }: ReviewIt
             </a>
           ) : null}
         </div>
-        <DoneLine state={state} mode={mode} voteLabel={voteLabel} decisionLabel={decisionLabel} onUndo={undo}
+        <DoneLine state={state} voteLabel={voteLabel} decisionLabel={decisionLabel} onUndo={undo}
           onChange={() => setChanging(true)} canDecide={can.decide} onWithdrawn={() => onChanged(item.sid, null)} />
       </div>
 
@@ -218,7 +212,7 @@ function ReviewItemInner({ item, reviewType, index, state, onChanged }: ReviewIt
         <p className="review-item__msg" role="status">{msg}</p>
       ) : null}
 
-      {mode === 'hosted' && state.question && state.question.total + state.question.stale > 0 ? (
+      {state.question && state.question.total + state.question.stale > 0 ? (
         <Tally item={item} reviewType={reviewType} index={index} question={state.question} voteLabel={voteLabel}
           resolved={!!state.resolved || state.question.state === 'resolved'} onChanged={() => onChanged(item.sid, null)} />
       ) : null}
@@ -240,9 +234,8 @@ function ReviewItemInner({ item, reviewType, index, state, onChanged }: ReviewIt
   );
 }
 
-function DoneLine({ state, mode, voteLabel, decisionLabel, onUndo, onChange, canDecide, onWithdrawn }: {
+function DoneLine({ state, voteLabel, decisionLabel, onUndo, onChange, canDecide, onWithdrawn }: {
   state: RowState;
-  mode: 'local' | 'hosted';
   voteLabel: (answer: string, verdict?: string) => string;
   decisionLabel: (d: Decision) => string;
   onUndo: () => void;
@@ -270,23 +263,7 @@ function DoneLine({ state, mode, voteLabel, decisionLabel, onUndo, onChange, can
   if (state.question?.state === 'resolved' && state.question.outcome === 'no_action') {
     return <span className="review-item__done">✓ Closed: nothing to do</span>;
   }
-  if (mode === 'local' && state.decision) {
-    const d = state.decision;
-    return (
-      <span className="review-item__done" title={`${d.id} · ${d.verdict}`}>
-        ✓ Saved as pending: {decisionLabel(d)}
-        {d.status === 'pending' ? (
-          <>
-            {' · '}
-            <button type="button" className="link-button" onClick={onUndo}>
-              Undo
-            </button>
-          </>
-        ) : null}
-      </span>
-    );
-  }
-  if (mode === 'hosted' && state.mine) {
+  if (state.mine) {
     return (
       <span className="review-item__done">
         ✓ Your vote: {voteLabel(state.mine.answer, state.mine.proposal?.verdict)} ·{' '}
@@ -303,7 +280,7 @@ function DoneLine({ state, mode, voteLabel, decisionLabel, onUndo, onChange, can
   return null;
 }
 
-/** Hosted: the votes on this row's question, and (for curators) turning them into a decision. */
+/** The votes on this row's question, and (for curators) turning them into a decision. */
 function Tally({ item, reviewType, index, question, voteLabel, resolved, onChanged }: {
   item: Item;
   reviewType: string;
@@ -342,7 +319,7 @@ function Tally({ item, reviewType, index, question, voteLabel, resolved, onChang
 
   async function toggleVotes() {
     setShowVotes((v) => !v);
-    if (!votes && backend.votes) {
+    if (!votes) {
       try {
         setVotes(await backend.votes(item.sid, reviewType));
       } catch (e) {
@@ -414,7 +391,7 @@ function Tally({ item, reviewType, index, question, voteLabel, resolved, onChang
           setDeciding(null);
           try {
             const edited = text.trim();
-            await backend.resolve!({
+            await backend.resolve({
               sid: item.sid,
               reviewType,
               outcome: 'decision',
@@ -436,7 +413,7 @@ function Tally({ item, reviewType, index, question, voteLabel, resolved, onChang
         onConfirm={async (note) => {
           setNoAction(false);
           try {
-            await backend.resolve!({ sid: item.sid, reviewType, outcome: 'no_action', note: note.trim() || undefined });
+            await backend.resolve({ sid: item.sid, reviewType, outcome: 'no_action', note: note.trim() || undefined });
             onChanged();
           } catch (e) {
             setMsg(saveErrorMessage(e));

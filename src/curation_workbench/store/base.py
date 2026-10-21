@@ -1,12 +1,14 @@
-"""The storage interface: what every decision store provides.
+"""The storage interface.
 
-Two backends implement `DecisionStore`: `YamlStore` (local mode, the repo's
-`decisions.yaml`) and `PgStore` (hosted mode, Postgres). Only `PgStore` also
-implements `VoteStore`; local mode never pretends to have votes.
+`DecisionRecord` is what the apply engine needs: read the records and stamp
+some applied. `YamlStore` (the repo's `decisions.yaml`) implements only that.
+`DecisionStore` adds making, changing and withdrawing decisions, and
+`VoteStore` adds votes; `PgStore` (the hosted site, Postgres) implements all
+three. Decisions are made only on the hosted site.
 
 Every write takes a `ValidationContext`: what the shared validator needs to
 judge a record (the subject registry, the verdict vocabulary, the review types
-and, in local mode, the workbench for plugin checks).
+and, where plugin code may run, the workbench for plugin checks).
 """
 from __future__ import annotations
 
@@ -22,8 +24,7 @@ if TYPE_CHECKING:
 class ValidationContext:
     """Inputs to `validate` / `validate_vote` for one write.
 
-    The local daemon builds it from subjects.json and verdicts.yaml with `wb`
-    set. The hosted API builds it from the project's snapshot bundle with
+    The hosted API builds it from the project's snapshot bundle with
     `wb=None` (plugin code never runs in the API) and `extra_known_ids` = the
     repo's own decision ids, so a hosted decision can supersede one of them.
     """
@@ -34,7 +35,7 @@ class ValidationContext:
     extra_known_ids: frozenset[str] = field(default_factory=frozenset)
 
 
-class DecisionStore(Protocol):
+class DecisionRecord(Protocol):
     kind: str                                   # "yaml" | "postgres"
 
     def token(self) -> str:
@@ -49,6 +50,13 @@ class DecisionStore(Protocol):
     def snapshot(self) -> dict:
         """The whole store: {version, next_id, decisions, token-ish}."""
 
+    def mark_applied(self, stamps: dict[str, dict]) -> None:
+        """Set `status: applied` and the `applied` block for each id, in one write."""
+
+
+class DecisionStore(DecisionRecord, Protocol):
+    """A store decisions are made in (Postgres only)."""
+
     def create(self, rec: dict, ctx: ValidationContext, *, expect_token: str | None = None,
                vote_ids: Any = ()) -> dict: ...
 
@@ -57,9 +65,6 @@ class DecisionStore(Protocol):
 
     def withdraw(self, dec_id: str, *, expect_token: str | None = None,
                  expect_rev: int | None = None) -> dict: ...
-
-    def mark_applied(self, stamps: dict[str, dict]) -> None:
-        """Set `status: applied` and the `applied` block for each id, in one write."""
 
 
 class VoteStore(Protocol):

@@ -74,15 +74,11 @@ def test_only_hosted_imports_hosted_fastapi_or_snapgate():
                 assert rel.as_posix() == "cli.py", (rel, name)
 
 
-def test_hosted_never_imports_the_local_daemon():
-    from pathlib import Path
-
-    import curation_workbench
-    hosted = Path(curation_workbench.__file__).parent / "hosted"
-    for path in sorted(hosted.rglob("*.py")):
-        for name in _imports(path):
-            assert name.rsplit(".", 1)[-1] != "server" and not name.endswith("server.py"), (path, name)
-            assert name not in ("..server", "...server", "curation_workbench.server"), (path, name)
+def test_pull_needs_only_a_base_install():
+    """`cwb pull` runs in a project's GitHub Action on a base install: no
+    SQLAlchemy, FastAPI or snapgate."""
+    loaded = loaded_after("from curation_workbench import pull, store\nfrom curation_workbench.store import landing")
+    assert [m for m in loaded if m.startswith(("fastapi", "snapgate", "sqlalchemy", "psycopg"))] == []
 
 
 def test_local_cli_help_loads_no_hosted_service_code():

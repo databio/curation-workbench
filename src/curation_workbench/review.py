@@ -6,12 +6,12 @@ project's display `title`, plain-language `reasons` per finding rule, per
 `answers_kind` settings (`answers`) and extra menu links (`more_links`).
 `derive.review(bundle, status, decisions_next_id)` sorts every queue item into
 them and builds each item's answers (answers.py); `build(wb)` is the
-local-mode wrapper over snapshot + derive. review.json (version 2):
+command-line wrapper over snapshot + derive. review.json (version 2):
 
   {_generated_by, version: 2, title, schema_fingerprint, decisions_next_id,
    progress: {waiting, percent_settled}, more_links: [{label, url}],
    tracks: [{id, title, blurb, kinds, total,
-     types: [{id, title, question, answers, help, answers_kind, count,
+     types: [{id, title, question, help, answers_kind, count,
               items: [item (answers.py)]}]}]}
 
 An item's open findings are its status.json `open_findings`, minus any
@@ -23,7 +23,7 @@ import json
 import yaml
 
 GENERATED_BY = "cwb review; do not edit"
-VALID_KEYS = {"id", "title", "question", "answers", "help", "rules", "answers_kind", "fallback"}
+VALID_KEYS = {"id", "title", "question", "help", "rules", "answers_kind", "fallback"}
 TOP_KEYS = {"version", "title", "tracks", "reasons", "answers", "more_links"}
 REASON_KEYS = {"pattern", "text", "else", "hide", "hide_if"}
 ANSWERS_KINDS = {"signoff", "links", "definitions", "duplicates", "structure", "keep-or-cut", "fields"}

@@ -1,7 +1,6 @@
 """Hosted decisions: read (any member), write (curator + `curation:decide`).
 
-The server owns the same fields as the local daemon (`SERVER_FIELDS`); the
-client cannot set them. It sets `decided_by` to "Name <email>",
+The server owns `SERVER_FIELDS`; the client cannot set them. It sets `decided_by` to "Name <email>",
 `decided_by_user_id`, `decided_on` today, `schema_fingerprint` from the
 current snapshot and `status: pending`; `PgStore.create` mints the `H-` id
 and sets `origin: {kind: hosted, ref: <id>}`. Updates and withdrawals need
@@ -21,8 +20,7 @@ from . import roles
 from .data import with_plugin_errors
 from .errors import BadRequest, NotSynced, PreconditionRequired
 
-#: The same server-owned fields as the local daemon's `server.SERVER_FIELDS`
-#: (tests/hosted/test_decisions_api.py checks they agree).
+#: Fields only the server sets.
 SERVER_FIELDS = ("id", "decided_by", "decided_on", "schema_fingerprint", "status", "applied", "origin")
 #: Keys a client may send back from a read that are never stored.
 READ_ONLY_KEYS = (*INTERNAL_KEYS, "plugin_errors")
@@ -132,17 +130,38 @@ def withdraw(engine, caller: Caller, slug: str, dec_id: str, if_match) -> dict:
     return {"decision": with_plugin_errors([out], checks)[0]}
 
 
+STALE_WORDS = {"subject_changed": "the item changed since it was decided",
+               "renamed": "the item was renamed since it was decided",
+               "subject_removed": "the item was removed since it was decided"}
+
+
 def export(engine, caller: Caller, slug: str) -> dict:
-    """Pending hosted decisions as plain records (no rev, vote links or stale
-    marks; dates as YYYY-MM-DD). Renumbering into the repo's DEC- sequence is
-    `store.pg.export_yaml`, not this."""
+    """What `cwb pull` applies: approved (pending) hosted decisions as plain
+    records (no rev, vote links or stale marks; dates as YYYY-MM-DD), oldest
+    first. Decisions that are stale or fail the worker's plugin checks are
+    held back and listed in `held` ({id, reason}) instead. `commit` is the
+    commit the site last synced. Renumbering into the repo's DEC- sequence
+    happens on the repo side (`store.landing.append_hosted`)."""
     with engine.connect() as conn:
         project, _ = roles.access(conn, caller, slug)
+        info = project_data.sync_info(conn, project["id"])
+        checks = _checks(conn, project)
         store = PgStore(engine, project["id"])
         with store.using(conn):
             recs = store.records()
-    return {"decisions": [{k: v for k, v in r.items() if k not in READ_ONLY_KEYS}
-                          for r in recs if r.get("status") == "pending"]}
+    out, held = [], []
+    for r in recs:
+        if r.get("status") != "pending":
+            continue
+        errs = list((checks or {}).get(r["id"]) or [])
+        if r.get("stale"):
+            held.append({"id": r["id"], "reason": STALE_WORDS.get(r.get("stale_reason"),
+                                                                  "the item changed since it was decided")})
+        elif errs:
+            held.append({"id": r["id"], "reason": "fails the project's checks: " + "; ".join(errs)})
+        else:
+            out.append({k: v for k, v in r.items() if k not in READ_ONLY_KEYS})
+    return {"decisions": out, "held": held, "commit": info["commit"]}
 
 
 __all__ = ["SERVER_FIELDS", "client_record", "create", "decided_by", "export", "get_decision",

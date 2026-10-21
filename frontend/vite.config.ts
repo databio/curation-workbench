@@ -3,10 +3,9 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
 // The dev server proxies same-origin paths to a running backend so hot
-// reloading behaves like the bundle `cwb serve` serves. Default: the local
-// daemon (`cwb serve`, port 8781). For the hosted API set
-// VITE_DEV_BACKEND=http://127.0.0.1:8134.
-const devBackend = process.env.VITE_DEV_BACKEND ?? "http://127.0.0.1:8781";
+// reloading behaves like the bundle `cwb hosted serve` serves. Default: the
+// API on port 8134 (README "Running it locally"); override with VITE_DEV_BACKEND.
+const devBackend = process.env.VITE_DEV_BACKEND ?? "http://127.0.0.1:8134";
 
 export default defineConfig({
   base: "/",
@@ -21,7 +20,7 @@ export default defineConfig({
   },
   build: {
     target: "esnext",
-    // Shipped as package data: `cwb serve` serves it with no Node at run time.
+    // Shipped as package data: `cwb hosted serve` serves it with no Node at run time.
     outDir: "../src/curation_workbench/web",
     emptyOutDir: true,
   },

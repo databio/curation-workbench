@@ -1,58 +1,34 @@
 import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { HistoryRow, ReviewIndex, SubjectIndex, SubjectView, Verdicts } from '../src/api/types';
-import { CURATOR, decision, fakeBackend, LOCAL, VOTER } from './fakeBackend';
+import { CURATOR, decision, fakeBackend, VOTER } from './fakeBackend';
 import { renderAt } from './render';
 
 const REVIEW: ReviewIndex = {
-  version: 2, title: 'Proj', schema_fingerprint: 'fp', decisions_next_id: 'DEC-0010',
+  version: 2, title: 'Proj', schema_fingerprint: 'fp', decisions_next_id: 'H-0010',
   progress: { waiting: 12, percent_settled: 40.5 }, more_links: [{ label: 'Site', url: 'https://example.org' }],
   tracks: [
     { id: 'vocabulary', title: 'Vocabulary', blurb: 'Words.', kinds: ['term'], total: 12, types: [
-      { id: 'links', title: 'Links', question: 'Linked?', answers: 'Accept · Reject', help: 'Help.', count: 7, sids: [] },
-      { id: 'signoff', title: 'Sign-off', question: 'Right?', answers: 'Looks right', help: 'Quick.', count: 0, sids: [] },
+      { id: 'links', title: 'Links', question: 'Linked?', help: 'Help.', count: 7, sids: [] },
+      { id: 'signoff', title: 'Sign-off', question: 'Right?', help: 'Quick.', count: 0, sids: [] },
     ] },
   ],
 };
 
 describe('review home', () => {
-  it('shows tracks, cards and counts; empty types are dimmed', async () => {
-    renderAt('/p/proj', fakeBackend('local', LOCAL, { review: REVIEW }));
+  it('one short line, a progress line, and cards with only title, count and question', async () => {
+    renderAt('/p/proj', fakeBackend(VOTER, { review: REVIEW }));
     expect(await screen.findByText('Vocabulary')).toBeInTheDocument();
-    expect(screen.getByTestId('progress')).toHaveTextContent('12 items waiting · 40.5% settled.');
-    expect(screen.getByTestId('progress')).toHaveTextContent('saved as pending');
+    expect(screen.getByTestId('progress')).toHaveTextContent('12 items waiting · 40.5% settled · all items');
     const card = screen.getByRole('link', { name: /Links 7/ });
     expect(card).toHaveAttribute('href', '/p/proj/review/vocabulary/links');
+    expect(card.textContent).toBe('Links7Linked?');
     expect(screen.getByRole('link', { name: /Sign-off 0/ })).toHaveClass('type-card--empty');
-  });
-
-  it('card button previews are plain chips named after the real buttons, not links', async () => {
-    renderAt('/p/proj', fakeBackend('local', LOCAL, { review: REVIEW }));
-    await screen.findByText('Vocabulary');
-    const previews = screen.getAllByTestId('answers');
-    expect(previews.map((p) => p.textContent)).toEqual(['Buttons:AcceptReject', 'Buttons:Looks right']);
-    const chips = previews.flatMap((p) => [...p.querySelectorAll('.type-card__answer')]);
-    expect(chips.map((c) => c.textContent)).toEqual(['Accept', 'Reject', 'Looks right']);
-    expect(chips.every((c) => c.tagName === 'SPAN' && !c.closest('a.type-card__answer'))).toBe(true);
-    expect(screen.getByRole('list', { name: 'How it works' }).textContent).toContain('saved as a pending decision');
-  });
-
-  it('hosted: the steps say a click is a vote', async () => {
-    renderAt('/p/proj', fakeBackend('hosted', VOTER, { review: REVIEW, questions: [] }));
-    await screen.findByText('Vocabulary');
-    expect(screen.getByRole('list', { name: 'How it works' }).textContent).toContain('Each answer is your vote');
-  });
-
-  it('hosted: answered counts, and waiting counts for curators', async () => {
-    const q = (sid: string, mine: boolean, total: number) => ({
-      sid, review_type: 'vocabulary/links', state: 'open' as const, outcome: null, decision_id: null, answers: [], total,
-      stale: 0, mine: mine ? { vote_id: 1, answer: 'x', proposal: null, comment: null, stale: false } : null,
-    });
-    const data = { review: REVIEW, questions: [q('a', true, 1), q('b', false, 2), q('c', false, 0)] };
-    renderAt('/p/proj', fakeBackend('hosted', CURATOR, data));
-    expect(await screen.findByText('1 you have answered · 2 with votes waiting for a decision')).toBeInTheDocument();
-    expect(screen.getByText(/Your answers are votes/)).toBeInTheDocument();
+    expect(screen.queryByText('Help.')).toBeNull();               // help is for the type page only
+    expect(screen.queryByText(/Buttons:/)).toBeNull();
+    expect(screen.queryByRole('list', { name: 'How it works' })).toBeNull();
+    expect(document.querySelectorAll('.page__lede')).toHaveLength(1);
   });
 });
 
@@ -73,17 +49,17 @@ const VIEW: SubjectView = {
   subject: { sid: 'term:X', kind: 'term', name: 'X', label: 'ex', slug: 'term-x', hash: 'hx', payload: { label: 'ex', tags: ['a', 'b'] } },
   status: { state: 'open', score: 1.5, open_findings: [] },
   findings: [{ id: 'f:1', rule: 'r', severity: 'warn', subjects: ['term:X'], message: 'msg', text: 'In plain words.', suggested_verdict: 'keep', open: true }],
-  decisions: [decision({ id: 'DEC-0003', subject: 'term:X', status: 'pending' })],
+  decisions: [decision({ id: 'H-0003', subject: 'term:X', status: 'pending' })],
   aliases: { forward: null, former: [] }, prompts: [], panels: [{ title: 'Usage', text: '5 files.' }], browse: null,
 };
 
 describe('subject page and decision control', () => {
   it('renders the subject, panels, history; verdict fields come from the schema', async () => {
-    const b = fakeBackend('local', LOCAL, { index: INDEX, subject: VIEW, verdicts: VERDICTS });
+    const b = fakeBackend(CURATOR, { index: INDEX, subject: VIEW, verdicts: VERDICTS });
     renderAt('/p/proj/subject/term-x', b);
     expect(await screen.findByRole('heading', { name: 'ex' })).toBeInTheDocument();
     expect(screen.getByText('5 files.')).toBeInTheDocument();
-    expect(screen.getByText('DEC-0003', { selector: '.history-entry span' })).toBeInTheDocument();
+    expect(screen.getByText('H-0003', { selector: '.history-entry span' })).toBeInTheDocument();
     // The decision shows its verdict label, not the id; the finding its plain words, not its message.
     expect(screen.getByText('Keep as is', { selector: '.history-entry .badge' })).toBeInTheDocument();
     expect(screen.getByText('In plain words.')).toBeInTheDocument();
@@ -99,13 +75,13 @@ describe('subject page and decision control', () => {
   });
 
   it('save sends also_affects from sid fields and supersedes the latest decision', async () => {
-    const b = fakeBackend('local', LOCAL, { index: INDEX, subject: VIEW, verdicts: VERDICTS });
+    const b = fakeBackend(CURATOR, { index: INDEX, subject: VIEW, verdicts: VERDICTS });
     renderAt('/p/proj/subject/term-x', b);
     await screen.findByRole('heading', { name: 'ex' });
     await userEvent.selectOptions(screen.getByLabelText('Verdict'), 'merge');
     await userEvent.type(screen.getByLabelText('into *'), 'term:Y');
     await userEvent.selectOptions(screen.getByLabelText('mappings *'), 'move');
-    const save = screen.getByRole('button', { name: 'Save as pending' });
+    const save = screen.getByRole('button', { name: 'Decide' });
     expect(save).toBeDisabled(); // rationale required
     await userEvent.type(screen.getByLabelText('Rationale'), 'Same thing.');
     await waitFor(() => expect(save).toBeEnabled());
@@ -114,13 +90,13 @@ describe('subject page and decision control', () => {
     expect(b.decide.mock.calls[0][0]).toEqual({
       subject: 'term:X', verdict: 'merge', operation: { op: 'merge', into: 'term:Y', mappings: 'move' },
       rationale: 'Same thing.', also_affects: ['term:Y'], evidence: [{ kind: 'finding', id: 'f:1' }],
-      subject_hashes: { 'term:X': 'hx', 'term:Y': 'hy' }, supersedes: 'DEC-0003',
+      subject_hashes: { 'term:X': 'hx', 'term:Y': 'hy' }, supersedes: 'H-0003',
     });
     expect(screen.getByRole('button', { name: 'Withdraw' })).toBeInTheDocument();
   });
 
-  it('hosted: voters get Vote (answer key = verdict); curators also get Decide', async () => {
-    const b = fakeBackend('hosted', VOTER, { index: INDEX, subject: VIEW, verdicts: VERDICTS });
+  it('voters get Vote (answer key = verdict); curators also get Decide', async () => {
+    const b = fakeBackend(VOTER, { index: INDEX, subject: VIEW, verdicts: VERDICTS });
     renderAt('/p/proj/subject/term-x', b);
     await screen.findByRole('heading', { name: 'ex' });
     expect(screen.queryByRole('button', { name: 'Decide' })).toBeNull();
@@ -128,7 +104,7 @@ describe('subject page and decision control', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Vote' }));
     await waitFor(() => expect(b.answer).toHaveBeenCalled());
     expect(b.answer.mock.calls[0][0]).toMatchObject({ sid: 'term:X', reviewType: 'subject', action: { answer: 'keep' }, hash: 'hx' });
-    const c = fakeBackend('hosted', CURATOR, { index: INDEX, subject: VIEW, verdicts: VERDICTS });
+    const c = fakeBackend(CURATOR, { index: INDEX, subject: VIEW, verdicts: VERDICTS });
     renderAt('/p/proj/subject/term-x', c);
     expect(await screen.findAllByRole('button', { name: 'Decide' })).toHaveLength(1);
   });
@@ -139,7 +115,7 @@ describe('subject page: where it is waiting', () => {
     const review: ReviewIndex = { ...REVIEW, tracks: [{ ...REVIEW.tracks[0], types: [
       { ...REVIEW.tracks[0].types[0], sids: ['term:X'] }, { ...REVIEW.tracks[0].types[1], sids: ['term:Y'] },
     ] }] };
-    renderAt('/p/proj/subject/term-x', fakeBackend('local', LOCAL, { index: INDEX, subject: VIEW, verdicts: VERDICTS, review }));
+    renderAt('/p/proj/subject/term-x', fakeBackend(CURATOR, { index: INDEX, subject: VIEW, verdicts: VERDICTS, review }));
     await screen.findByRole('heading', { name: 'ex' });
     const line = await screen.findByTestId('waiting-on');
     expect(within(line).getAllByRole('link').map((a) => [a.textContent, a.getAttribute('href')]))
@@ -147,34 +123,53 @@ describe('subject page: where it is waiting', () => {
   });
 });
 
-describe('apply', () => {
-  it('groups pending decisions under verdict labels and spells out operations', async () => {
-    const b = fakeBackend('local', LOCAL, { index: INDEX, verdicts: VERDICTS });
-    b.pending.mockResolvedValue({ ok: true, errors: {}, files: [], decisions: [
-      { ...decision({ id: 'DEC-0001', subject: 'term:X', verdict: 'keep' }), effects: null },
-      { ...decision({ id: 'DEC-0002', subject: 'term:Y', verdict: 'set_flags', operation: { op: 'set_flags', n: 2, flag: false } }), effects: null },
-    ] });
-    renderAt('/p/proj/apply', b);
-    expect(await screen.findByRole('heading', { name: /Keep as is/ })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: /Flags/ })).toBeInTheDocument();
-    expect(screen.queryByText('set_flags')).toBeNull();
-    expect(screen.getByText('n:').parentElement).toHaveTextContent('n: 2');
-    expect(screen.getByText('flag:').parentElement).toHaveTextContent('flag: no');
-    expect(screen.getByRole('button', { name: 'Apply all (2)' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Preview changes' })).toBeInTheDocument();
+describe('approved page', () => {
+  it('lists approved decisions, flags held ones, says how they reach the repository, and edits nothing', async () => {
+    const b = fakeBackend(CURATOR, { index: INDEX, verdicts: VERDICTS });
+    b.makeRepoKey = vi.fn(async () => 'cwb_secret');
+    b.pending.mockResolvedValue({ ok: false, errors: { 'H-0002': ['bad link'] }, decisions: [
+      { ...decision({ id: 'H-0001', subject: 'term:X', verdict: 'keep' }), effects: null },
+      { ...decision({ id: 'H-0002', subject: 'term:Y', verdict: 'set_flags', operation: { op: 'set_flags', n: 2, flag: false } }), effects: null },
+      { ...decision({ id: 'H-0003', subject: 'term:Y', verdict: 'keep', decided_by: 'Ann <a@x>' }), stale: true, effects: null },
+    ], applied: [decision({ id: 'H-0000', subject: 'term:X', status: 'applied',
+      applied: { on: '2026-10-20', subject_hashes_after: {}, created: [], retired: [], repo_id: 'DEC-0161', commit: 'abc' } })],
+    repository: { url: 'https://github.com/o/r', workflow_url: 'https://github.com/o/r/actions/workflows/curate.yml',
+      commit: '0123456789abcdef', commit_url: 'https://github.com/o/r/commit/0123456789abcdef', branch: 'master', synced_at: null } });
+    renderAt('/p/proj/approved', b);
+    expect(await screen.findByRole('heading', { name: 'Approved, waiting to reach the repository' })).toBeInTheDocument();
+    const waiting = await screen.findByTestId('waiting');
+    expect(within(waiting).getAllByText('Keep as is')).toHaveLength(2);
+    expect(within(waiting).queryByText('set_flags')).toBeNull();
+    expect(within(waiting).getByText('n:').parentElement).toHaveTextContent('n: 2');
+    expect(within(waiting).getByText(/fails the project's checks \(bad link\)/)).toBeInTheDocument();
+    expect(within(waiting).getByText(/the item changed since this was decided/)).toBeInTheDocument();
+    expect(within(waiting).getByText(/^Ann ·/)).toBeInTheDocument();           // the name, not the email
+    expect(screen.getByRole('link', { name: /See its runs/ })).toHaveAttribute('href', 'https://github.com/o/r/actions/workflows/curate.yml');
+    expect(screen.getByRole('link', { name: '0123456789' })).toHaveAttribute('href', 'https://github.com/o/r/commit/0123456789abcdef');
+    expect(within(screen.getByTestId('reached')).getByText('DEC-0161')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Apply|Preview/ })).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: 'Make a key for the repository' }));
+    expect(await screen.findByText('cwb_secret')).toBeInTheDocument();
+    expect(screen.getByTestId('repo-key')).toHaveTextContent('CURATE_API_KEY');
+  });
+
+  it('voters get no key button', async () => {
+    renderAt('/p/proj/approved', fakeBackend(VOTER, { index: INDEX, verdicts: VERDICTS }));
+    expect(await screen.findByText(/Nothing approved yet/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Make a key for the repository' })).toBeNull();
   });
 });
 
 describe('history', () => {
   const rows: HistoryRow[] = [
-    { ...decision({ id: 'DEC-0002', subject: 'term:X', verdict: 'keep', status: 'pending', rationale: 'alpha' }), now: null, name: 'ex', kind: 'term', layer: 1, slug: 'term-x' },
-    { ...decision({ id: 'DEC-0001', subject: 'slot:a', verdict: 'set_cardinality', status: 'applied', rationale: 'beta' }), now: null, name: 'a', kind: 'slot', layer: 2, slug: 'slot-a' },
+    { ...decision({ id: 'H-0002', subject: 'term:X', verdict: 'keep', status: 'pending', rationale: 'alpha' }), now: null, name: 'ex', kind: 'term', layer: 1, slug: 'term-x' },
+    { ...decision({ id: 'H-0001', subject: 'slot:a', verdict: 'set_cardinality', status: 'applied', rationale: 'beta' }), now: null, name: 'a', kind: 'slot', layer: 2, slug: 'slot-a' },
   ];
   it('filters by kind and status, and searches', async () => {
-    const b = fakeBackend('local', LOCAL, { index: INDEX, verdicts: VERDICTS });
+    const b = fakeBackend(CURATOR, { index: INDEX, verdicts: VERDICTS });
     b.history.mockResolvedValue(rows);
     renderAt('/p/proj/history', b);
-    await screen.findByText('DEC-0002');
+    await screen.findByText('H-0002');
     expect(screen.getByTestId('count')).toHaveTextContent('Showing 2 of 2.');
     // Verdicts in words: the label when verdicts.yaml knows the kind, else the id with spaces.
     expect(screen.getByText('Keep as is', { selector: '.badge' })).toBeInTheDocument();
@@ -187,14 +182,14 @@ describe('history', () => {
     fireEvent.change(screen.getByLabelText('Status'), { target: { value: '' } });
     fireEvent.change(screen.getByLabelText('Search'), { target: { value: 'BETA' } });
     expect(screen.getByTestId('count')).toHaveTextContent('Showing 1 of 2.');
-    expect(screen.queryByText('DEC-0002')).toBeNull();
+    expect(screen.queryByText('H-0002')).toBeNull();
   });
 });
 
 describe('team', () => {
   it('superadmins add, change and remove members', async () => {
     const can = { ...CURATOR, adminTeam: true, adminAccounts: true };
-    const b = fakeBackend('hosted', can, {});
+    const b = fakeBackend(can, {});
     b.team.mockResolvedValue([{ user_id: 1, name: 'Ann', email: 'a@x', role: 'voter' }]);
     b.approvedUsers.mockResolvedValue([{ id: 1, name: 'Ann', email: 'a@x' }, { id: 2, name: 'Bo', email: 'b@x' }]);
     renderAt('/p/proj/team', b);
@@ -213,7 +208,7 @@ describe('team', () => {
   });
 
   it('is not shown to anyone else', async () => {
-    const b = fakeBackend('hosted', CURATOR, { review: REVIEW });
+    const b = fakeBackend(CURATOR, { review: REVIEW });
     renderAt('/p/proj/team', b);
     expect(await screen.findByText('Vocabulary')).toBeInTheDocument(); // redirected home
     expect(b.team).not.toHaveBeenCalled();

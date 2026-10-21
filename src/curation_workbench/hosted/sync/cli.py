@@ -4,7 +4,7 @@ Run inside the API or worker container with /run/secrets/curate_env sourced
 (Pigeon style); the resident commands act as the superadmin operator. The
 project row comes first: `cwb db project add <slug> --name ...`.
 
-This module is imported by `cwb`'s argument parser in local mode too, so it
+This module is imported by `cwb`'s argument parser on a base install too, so it
 imports SQLAlchemy and the rest only inside the command functions.
 """
 from __future__ import annotations

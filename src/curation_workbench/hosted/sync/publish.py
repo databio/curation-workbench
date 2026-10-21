@@ -1,7 +1,8 @@
 """Publishing a snapshot, and writing the derived status/review.
 
 `publish_snapshot` is one transaction: insert (or reuse) the `cw_snapshots`
-row, run the staleness pass, derive status and review from the bundle plus
+row, mark hosted decisions that reached the repo as applied (`mark_landed`),
+run the staleness pass, derive status and review from the bundle plus
 the merged decision list, write `cw_derived` with the `decisions_rev` read in
 the same transaction, and make the snapshot current. A failure leaves the
 last good snapshot live. Plan 2's dev stand-in (`cwb hosted admin
@@ -9,6 +10,7 @@ dev-snapshot`) calls the same function, so dev and production publish alike.
 """
 from __future__ import annotations
 
+import datetime
 import gzip
 import hashlib
 import json
@@ -18,6 +20,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from ... import derive
 from ...snapshot import check_format
+from ...store.landing import landed_refs
 from ...store.pg import PgStore
 from . import jobs, stale
 from .tables import cw_derived, cw_residents, cw_snapshots
@@ -56,6 +59,32 @@ def _resident(conn, resident_id, lock=False):
     return row
 
 
+def mark_landed(store, bundle, commit_sha):
+    """Mark every pending hosted decision that the repo now holds (a repo
+    record with `origin: {kind: hosted, ref: <its H- id>}`, written by `cwb
+    pull`) as applied. The `applied` block is the repo record's (for a
+    non-terminal record such as `defer`, which the repo keeps pending, just
+    today's date), plus `repo_id` (its DEC- id) and `commit`. Runs before the
+    staleness pass, so a decision that changed its own subject is never
+    marked stale. `store` is bound to the caller's transaction. Returns the
+    H- ids marked."""
+    landed = landed_refs(bundle.get("repo_decisions") or [])
+    if not landed:
+        return []
+    stamps = {}
+    for r in store.records():
+        repo = landed.get(r["id"])
+        if repo is None or r.get("status") != "pending":
+            continue
+        block = dict(repo.get("applied") or {}) if repo.get("status") == "applied" else {}
+        block.setdefault("on", datetime.date.today().isoformat())
+        block.update(repo_id=repo["id"], commit=commit_sha)
+        stamps[r["id"]] = block
+    if stamps:
+        store.mark_applied(stamps)
+    return sorted(stamps)
+
+
 def write_derived(conn, store, resident_id, snapshot_id, bundle, *, new_snapshot=False):
     """Derive status and review from `bundle` and the merged decisions and
     overwrite the resident's `cw_derived` row. `store` is bound to `conn`."""
@@ -91,6 +120,7 @@ def publish_snapshot(conn, resident_id, bundle, commit_sha, plugin_tree_used=Non
             warnings=list(bundle.get("warnings") or [])).returning(cw_snapshots.c.id)).scalar_one()
     store = PgStore(conn.engine, res.project_id)
     with store.using(conn):
+        mark_landed(store, bundle, commit_sha)
         stale.run_pass(store, conn, resident_id, sid, bundle)
         write_derived(conn, store, resident_id, sid, bundle,
                       new_snapshot=res.current_snapshot_id != sid)

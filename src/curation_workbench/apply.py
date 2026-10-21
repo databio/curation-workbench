@@ -287,31 +287,41 @@ def _stamp(wb, result, before):
     wb.store.mark_applied(stamps)
 
 
-def run(wb, want=None, dry_run=False):
+def _regen_and_verify(wb, conf, log):
+    if conf["regen"] is None:
+        _regen_inprocess(wb)
+        log.append("regen (in-process) -> ok")
+    else:
+        for cmd in conf["regen"]:
+            _run(cmd, wb.cfg.root, log)
+    for cmd in conf["verify"]:
+        _run(cmd, wb.cfg.root, log)
+
+
+def run(wb, want=None, dry_run=False, *, regen_if_empty=False):
+    """Apply pending records (or only `want`). `regen_if_empty`: when nothing
+    is left to apply (for example only non-terminal records such as `defer`
+    were added to decisions.yaml), still run regen and verify, all or nothing,
+    so files derived from the decisions stay current."""
     if wb.store.kind != "yaml":
-        raise ApplyError("apply needs the local YAML store; hosted decisions reach the repo via export")
+        raise ApplyError("apply works on the repo's decisions.yaml; hosted decisions get there "
+                         "through `cwb pull`")
     result, ctx = plan(wb, want)
-    if not result.ok or dry_run or not result.records:
+    if not result.ok or dry_run or (not result.records and not regen_if_empty):
         return result
     root, conf = wb.cfg.root, apply_conf(wb)
     with tempfile.TemporaryDirectory(prefix="cwb-apply-") as tmp:
         tmp = Path(tmp)
         _snapshot(root, tmp, conf["snapshot"])
         try:
-            for path, text in ctx.changed().items():
-                _write(root / path, text)
-            for cmd in conf["after_write"]:
-                _run(cmd, root, result.log)
-            _write_registry(wb)
-            _stamp(wb, result, ctx.subjects.by_sid)
-            if conf["regen"] is None:
-                _regen_inprocess(wb)
-                result.log.append("regen (in-process) -> ok")
-            else:
-                for cmd in conf["regen"]:
+            if result.records:
+                for path, text in ctx.changed().items():
+                    _write(root / path, text)
+                for cmd in conf["after_write"]:
                     _run(cmd, root, result.log)
-            for cmd in conf["verify"]:
-                _run(cmd, root, result.log)
+                _write_registry(wb)
+                _stamp(wb, result, ctx.subjects.by_sid)
+            _regen_and_verify(wb, conf, result.log)
         except (ApplyError, OSError, registry.RegistryError) as e:
             _restore(root, tmp, conf["snapshot"])
             result.ok = False

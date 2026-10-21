@@ -53,7 +53,6 @@ export interface ReviewTypeMeta {
   id: string;
   title: string;
   question?: string;
-  answers?: string;
   help?: string;
   answers_kind?: string;
   count: number;
@@ -150,10 +149,18 @@ export interface Decision extends DecisionDraft {
     subject_hashes_after: Record<string, string> | null;
     created: string[];
     retired: string[];
+    /** Set when a site decision reached the repository: its id there, and the commit. */
+    repo_id?: string;
+    commit?: string;
   } | null;
   origin?: { kind: string; ref: string | null } | null;
-  /** Hosted only: compare-and-swap revision (If-Match). */
+  /** Compare-and-swap revision (If-Match). */
   rev?: number;
+  /** The item changed since the decision was made (it is held back). */
+  stale?: boolean;
+  stale_reason?: string | null;
+  /** The project's checks that this decision fails. */
+  plugin_errors?: string[];
 }
 
 export interface Panel {
@@ -227,29 +234,26 @@ export interface PendingDecision extends Decision {
   effects: { created?: string[]; retired?: string[]; renamed?: Record<string, string> } | null;
 }
 
+/** Where approved decisions go (the project's repository). */
+export interface Repository {
+  url: string | null;
+  /** The project's `curate` GitHub Actions workflow page (github.com repos only). */
+  workflow_url: string | null;
+  commit: string | null;
+  commit_url: string | null;
+  branch: string | null;
+  synced_at: string | null;
+}
+
+/** GET .../pending: approved decisions waiting to reach the repository. */
 export interface Pending {
   decisions: PendingDecision[];
+  /** The project's checks that fail, per decision id. */
   errors: Record<string, string[] | string>;
-  /** Local only: the dry run's diff per file (absent in hosted mode). */
-  files?: { path: string; diff: string }[] | null;
   ok: boolean;
-}
-
-export interface ApplyRun {
-  running: boolean;
-  dry_run: boolean;
-  log: string[];
-  exit: number | null;
-}
-
-export interface Health {
-  ok: boolean;
-  project: string;
-  git_branch: string;
-  schema_fingerprint: string;
-  decision_count: number;
-  working_tree_dirty: boolean;
-  decided_by: string;
+  /** The latest decisions that reached the repository (newest first). */
+  applied?: Decision[];
+  repository?: Repository;
 }
 
 // ---------------------------------------------------------------- hosted (plan 2 step 8)
@@ -326,4 +330,4 @@ export interface Project {
   role?: string | null;
 }
 
-export type Answer = { kind: 'decision'; decision: Decision } | { kind: 'vote'; vote: Vote };
+export type Answer = { kind: 'vote'; vote: Vote };

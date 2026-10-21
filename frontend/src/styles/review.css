@@ -79,28 +79,6 @@
   color: rgb(var(--color-warning));
 }
 
-/* --- mode chip and stale bar --- */
-.mode-chip {
-  padding: var(--space-1) var(--space-3);
-  border-radius: var(--radius-full);
-  background: rgb(var(--color-success-bg));
-  color: rgb(var(--color-success));
-  font-size: var(--font-size-xs);
-}
-
-.mode-chip__dirty {
-  color: rgb(var(--color-warning));
-  font-weight: var(--font-weight-semibold);
-}
-
-.stale-bar {
-  padding: var(--space-2) var(--space-4);
-  background: rgb(var(--color-warning-bg));
-  color: rgb(var(--color-warning));
-  font-size: var(--font-size-sm);
-  text-align: center;
-}
-
 /* --- review home --- */
 .type-grid {
   display: grid;
@@ -151,65 +129,6 @@
   margin: var(--space-2) 0 0;
   color: rgb(var(--color-muted));
   font-size: var(--font-size-xs);
-}
-
-/* The card's button preview: grey button-shaped chips, so it reads as
-   "these are the buttons on that page", not as links. */
-.type-card__answers {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-1);
-  margin: var(--space-3) 0 0;
-  color: rgb(var(--color-muted));
-  font-size: var(--font-size-xs);
-}
-
-.type-card__answers-label {
-  margin-right: var(--space-1);
-}
-
-.type-card__answer {
-  padding: 0 var(--space-2);
-  border: var(--border-width) solid rgb(var(--color-border-strong));
-  border-radius: var(--radius-sm);
-  background: rgb(var(--color-surface-alt));
-  color: rgb(var(--color-muted-strong));
-  white-space: nowrap;
-}
-
-/* --- how it works (review home) --- */
-.steps {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(var(--card-min-width), 1fr));
-  gap: var(--space-3);
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.steps__step {
-  display: flex;
-  gap: var(--space-2);
-  padding: var(--space-3) var(--space-4);
-  border: var(--border-width) solid rgb(var(--color-border));
-  border-radius: var(--radius-md);
-  background: rgb(var(--color-surface-alt));
-  font-size: var(--font-size-sm);
-}
-
-.steps__num {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: var(--step-num-size);
-  height: var(--step-num-size);
-  border-radius: var(--radius-full);
-  background: rgb(var(--color-primary));
-  color: rgb(var(--color-on-primary));
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-bold);
 }
 
 .page__hint {
@@ -576,7 +495,7 @@
   font-size: var(--font-size-xs);
 }
 
-/* --- apply page --- */
+/* --- approved page --- */
 .apply-log {
   max-height: var(--apply-log-height);
   margin: 0;
@@ -587,38 +506,6 @@
   color: rgb(var(--color-background));
   font-size: var(--font-size-xs);
   white-space: pre-wrap;
-}
-
-.diff {
-  padding: var(--space-2) var(--space-4);
-}
-
-.diff__body {
-  margin: var(--space-2) 0;
-  overflow-x: auto;
-  font-size: var(--font-size-xs);
-}
-
-.diff__line {
-  color: rgb(var(--color-muted-strong));
-}
-
-.diff__line--file {
-  color: rgb(var(--color-muted));
-}
-
-.diff__line--add {
-  background: rgb(var(--color-success-bg));
-  color: rgb(var(--color-success));
-}
-
-.diff__line--del {
-  background: rgb(var(--color-danger-bg));
-  color: rgb(var(--color-danger));
-}
-
-.diff__line--hunk {
-  color: rgb(var(--color-accent-text));
 }
 
 /* --- history, all items --- */
@@ -636,7 +523,7 @@
   gap: var(--space-2);
 }
 
-/* Apply page: what applying does. */
+/* Approved page: how decisions reach the repository. */
 .apply-explainer ol {
   margin: var(--space-2) 0;
   padding-left: var(--space-6);

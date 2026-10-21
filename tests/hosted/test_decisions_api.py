@@ -2,7 +2,7 @@
 import pytest
 from .hostedtools import decision_body, publish
 
-from curation_workbench import server, store
+from curation_workbench import store
 from curation_workbench.hosted import project_data
 from curation_workbench.hosted.service import decisions as svc
 
@@ -14,10 +14,6 @@ T = "/api/v1/projects/toy/decisions"
 @pytest.fixture
 def h(team, auth_headers):
     return auth_headers(team.curator)
-
-
-def test_server_fields_match_local_daemon():
-    assert svc.SERVER_FIELDS == server.SERVER_FIELDS
 
 
 def test_create_update_withdraw(client, h, toy_hash, team):

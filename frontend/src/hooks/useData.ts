@@ -52,9 +52,7 @@ export function useDecisions() {
 
 export function useQuestions(reviewType?: string) {
   const b = useBackend();
-  return useResource([b.project.slug, 'questions', reviewType ?? ''], () => b.questions!(reviewType), {
-    enabled: !!b.questions,
-  });
+  return useResource([b.project.slug, 'questions', reviewType ?? ''], () => b.questions(reviewType));
 }
 
 /**
@@ -71,11 +69,4 @@ export function useChanged(): () => void {
     }
     notifyDecision();
   }, [b, invalidate]);
-}
-
-/** Refetch the built lists too (after an apply). */
-export function useRebuilt(): () => void {
-  const b = useBackend();
-  const invalidate = useInvalidateResources();
-  return useCallback(() => invalidate([b.project.slug]), [b, invalidate]);
 }

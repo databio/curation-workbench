@@ -1,7 +1,7 @@
 """`cwb hosted serve | admin add-member | admin dev-snapshot` (plan 2), plus
 plan 4's `worker | resident ... | isolation-check` (`hosted.sync.cli`).
 
-`cwb`'s argument parser imports this module in local mode too, so it imports
+`cwb`'s argument parser imports this module on a base install too, so it imports
 FastAPI, SQLAlchemy and snapgate only inside the command functions.
 """
 from __future__ import annotations

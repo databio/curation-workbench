@@ -1,22 +1,27 @@
-"""Decision storage: one interface, two backends, one validator.
+"""Decision storage: where decisions are made, where they land, one validator.
 
   store.validate   validation and vocabulary, backend-free (`validate`,
                    `validate_vote`, `check_operation`, `Subjects`, ...)
-  store.base       `DecisionStore` / `VoteStore` protocols, `ValidationContext`
-  store.yaml_store `YamlStore`: local mode, the repo's decisions.yaml
-  store.pg         `PgStore`: hosted mode, Postgres (needs the `postgres` extra;
-                   imported lazily, so local mode never loads SQLAlchemy)
+  store.base       `DecisionRecord` / `DecisionStore` / `VoteStore` protocols,
+                   `ValidationContext`
+  store.pg         `PgStore`: the hosted site's decisions and votes, Postgres
+                   (needs the `postgres` extra; imported lazily). The only place
+                   decisions are made.
+  store.yaml_store `YamlStore`: the repo's decisions.yaml, the permanent record
+                   of decisions that reached the repo (read; apply stamps it)
+  store.landing    `append_hosted`: hosted decisions -> decisions.yaml (`cwb pull`)
 """
-from .base import DecisionStore, ValidationContext, VoteStore
+from .base import DecisionRecord, DecisionStore, ValidationContext, VoteStore
 from .validate import (ANSWER_RE, EVIDENCE_KINDS, FIELDS, HOSTED_ID_RE, ID_RE, ORIGINS,
                        STALE_REASONS, STATUSES, StoreError, Subjects, check_operation,
                        check_updatable, check_withdrawable, load_verdicts, normalize,
                        to_plain, validate, validate_vote)
-from .yaml_store import LOCK, YamlStore
+from .yaml_store import YamlStore
 
 
 def open_store(wb, backend="yaml", *, engine=None, project=None):
-    """The store for `wb`: its decisions.yaml, or a project in Postgres.
+    """The store for `wb`: its decisions.yaml (read and apply only), or a
+    project in Postgres.
 
     For "postgres", `project` is a project id (int) or slug (str)."""
     if backend == "yaml":
@@ -35,7 +40,7 @@ def open_store(wb, backend="yaml", *, engine=None, project=None):
 
 
 __all__ = [
-    "ANSWER_RE", "DecisionStore", "EVIDENCE_KINDS", "FIELDS", "HOSTED_ID_RE", "ID_RE", "LOCK",
+    "ANSWER_RE", "DecisionRecord", "DecisionStore", "EVIDENCE_KINDS", "FIELDS", "HOSTED_ID_RE", "ID_RE",
     "ORIGINS", "STALE_REASONS", "STATUSES", "StoreError", "Subjects", "ValidationContext",
     "VoteStore", "YamlStore", "check_operation", "check_updatable", "check_withdrawable",
     "load_verdicts", "normalize", "open_store", "to_plain", "validate", "validate_vote",

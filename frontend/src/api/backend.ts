@@ -1,17 +1,13 @@
-// The one seam between pages and a server. Local mode (local.ts) talks to the
-// loopback daemon (`cwb serve`); hosted mode (hosted.ts) to the hosted API.
-// Pages check `can`, never the mode string, except for wording ("Save" vs
-// "Vote").
+// The one seam between pages and the server (hosted.ts talks to the hosted
+// API). Pages check `can`; tests swap in a fake.
 import { createContext, useContext } from 'react';
 import type {
   Action,
   Answer,
-  ApplyRun,
   ApprovedUser,
   Decision,
   DecisionDraft,
   Finding,
-  Health,
   HistoryRow,
   Pending,
   Question,
@@ -27,8 +23,6 @@ import type {
 export interface Can {
   decide: boolean;
   vote: boolean;
-  apply: boolean;
-  export: boolean;
   adminTeam: boolean;
   adminAccounts: boolean;
 }
@@ -40,7 +34,7 @@ export interface AnswerQuestion {
   action: Action;
   /** The hash of the subject the person saw (the item's `hash`). */
   hash: string;
-  /** Hosted: an optional comment sent with the vote. */
+  /** An optional comment sent with the vote. */
   comment?: string;
 }
 
@@ -54,7 +48,6 @@ export interface ResolveRequest {
 }
 
 export interface Backend {
-  mode: 'local' | 'hosted';
   project: { slug: string; title: string };
   me: { name: string; role?: string | null };
   can: Can;
@@ -68,22 +61,18 @@ export interface Backend {
   pending(): Promise<Pending>;
   /** The live decision store, for done-state. */
   decisions(): Promise<Decision[]>;
-  /** Local: a decision. Hosted: a vote. */
+  /** A vote. */
   answer(q: AnswerQuestion, draft: DecisionDraft): Promise<Answer>;
-  /** Local: withdraw the decision. Hosted: retract the vote. */
+  /** Retract the vote. */
   undo(answer: Answer): Promise<void>;
-  questions?(reviewType?: string, sid?: string): Promise<Question[]>;
-  votes?(sid: string, reviewType: string): Promise<Vote[]>;
+  questions(reviewType?: string, sid?: string): Promise<Question[]>;
+  votes(sid: string, reviewType: string): Promise<Vote[]>;
   /** A direct decision (can.decide). */
   decide(draft: DecisionDraft): Promise<Decision>;
-  resolve?(q: ResolveRequest): Promise<Decision | null>;
+  resolve(q: ResolveRequest): Promise<Decision | null>;
   withdraw(d: Decision): Promise<void>;
-  apply?(opts: { dryRun: boolean; onLine: (line: string) => void }): Promise<number>;
-  applyStatus?(): Promise<ApplyRun>;
-  /** Local: the daemon's health (branch, dirty tree, fingerprint). */
-  health?(): Promise<Health>;
-  /** Hosted, with can.export: where the pending decisions download from. */
-  exportUrl?: string;
+  /** Curators: a read-only API key for the project repository's GitHub Action, shown once. */
+  makeRepoKey?(): Promise<string>;
   team?(): Promise<TeamMember[]>;
   setMember?(userId: number, role: 'voter' | 'curator'): Promise<void>;
   removeMember?(userId: number): Promise<void>;

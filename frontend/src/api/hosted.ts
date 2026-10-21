@@ -1,9 +1,8 @@
-// Hosted mode: the hosted API (plan 2, hosted/API.md). The only module that
-// knows its routes. Requests carry snapgate's bearer token and retry once on
+// The hosted API (hosted/API.md). The only module that knows its routes. Requests carry snapgate's bearer token and retry once on
 // a 401 through snapgate's single-flight `refreshAccessToken` (two concurrent
 // refreshes would rotate the refresh token twice and end the session), as
-// Pigeon's api/client.ts does. Errors `{detail, code, errors?}` become the
-// same `CurationError` local mode throws.
+// Pigeon's api/client.ts does. Errors `{detail, code, errors?}` become a
+// `CurationError`.
 import { ACCESS_TOKEN_KEY, ACCESS_EXPIRES_AT_KEY, REFRESH_TOKEN_KEY, refreshAccessToken } from '../snapgate';
 import { CurationError, type Backend, type Can } from './backend';
 import type {
@@ -109,8 +108,6 @@ export function canFor(me: Me, slug: string): Can {
   return {
     vote: !!role,
     decide: role === 'curator',
-    apply: false,
-    export: false,
     adminTeam: superadmin,
     adminAccounts: superadmin,
   };
@@ -131,7 +128,6 @@ export function createHostedBackend(me: Me, project: HostedProject, fetchImpl?: 
   const get = <T,>(path: string) => request<T>('GET', `${base}/${path}`);
 
   return {
-    mode: 'hosted',
     project: { slug, title: project.name },
     me: { name: me.user.name, role: me.site_role === 'superadmin' ? 'superadmin' : me.memberships[slug] ?? null },
     can: canFor(me, slug),
@@ -163,7 +159,6 @@ export function createHostedBackend(me: Me, project: HostedProject, fetchImpl?: 
       return { kind: 'vote', vote: out.vote };
     },
     undo: async (a) => {
-      if (a.kind !== 'vote') return;
       await request<void>('DELETE', `${base}/votes${q({ sid: a.vote.sid, review_type: a.vote.review_type })}`);
     },
     questions: async (reviewType, sid) =>
@@ -182,7 +177,16 @@ export function createHostedBackend(me: Me, project: HostedProject, fetchImpl?: 
         'If-Match': String(d.rev ?? ''),
       });
     },
-    exportUrl: `${base}/decisions/export`,
+    makeRepoKey: me.memberships[slug] === 'curator'
+      ? async () => {
+        const out = await request<{ api_key: string }>('POST', '/auth/api-keys', {
+          name: `${slug} repository (curate Action)`,
+          description: `Read-only key for ${slug}'s curate GitHub Action (repository secret CURATE_API_KEY).`,
+          scopes: ['curation:read'],
+        });
+        return out.api_key;
+      }
+      : undefined,
     team: async () => (await get<{ members: TeamMember[] }>('team')).members,
     setMember: async (userId, role) => {
       await request('PUT', `${admin}/${userId}`, { role });

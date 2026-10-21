@@ -1,18 +1,21 @@
-"""One set of behavior tests run against both decision stores.
+"""The decision store's behavior (Postgres, where decisions are made), and the
+trip from there into a repo's decisions.yaml (where they land and are stamped
+applied).
 
-`yaml` uses a temp copy of the toy project's decisions.yaml; `postgres` uses a
-fresh schema (pg_engine) and skips without CWB_TEST_POSTGRES_URL. The toy
-project is copied to tmp_path, so nothing in the repo changes."""
+`postgres` uses a fresh schema (pg_engine) and skips without
+CWB_TEST_POSTGRES_URL. The toy project is copied to tmp_path, so nothing in
+the repo changes."""
 import shutil
 from pathlib import Path
 
 import pytest
 
 from curation_workbench import store, subjects
+from curation_workbench.store import landing
 from curation_workbench.workbench import Workbench
 
 TOY = Path(__file__).parent / "fixtures" / "toy"
-PREFIX = {"yaml": "DEC-", "postgres": "H-"}
+PREFIX = {"postgres": "H-"}
 
 
 @pytest.fixture
@@ -32,14 +35,12 @@ def toy_ctx(wb):
 
 
 def make_store(kind, wb, request, slug="toy"):
-    if kind == "yaml":
-        return wb.store
     from curation_workbench.store.pg import PgStore, projects
     engine = request.getfixturevalue("pg_engine")
     return PgStore(engine, projects.create_project(engine, slug, "Toy")["id"])
 
 
-@pytest.fixture(params=["yaml", pytest.param("postgres", marks=pytest.mark.postgres)])
+@pytest.fixture(params=[pytest.param("postgres", marks=pytest.mark.postgres)])
 def backend(request, toy):
     return request.param, make_store(request.param, toy, request), toy_ctx(toy)
 
@@ -140,34 +141,51 @@ def test_mark_applied(backend):
     assert e.value.status == 404
 
 
-def scripted(st, ctx):
-    """A fixed series of writes; the records it leaves, ids made backend-neutral."""
-    a = st.create(draft(ctx), ctx)
-    b = st.create(draft(ctx, "term:TOY_0002", verdict="edit_description",
-                        operation={"op": "edit_description", "description": "Blue."}), ctx)
-    st.update(a["id"], {**draft(ctx), "rationale": "changed", "also_affects": ["term:TOY_0002"],
-                        "subject_hashes": {s: ctx.subjects.get(s)["hash"]
-                                           for s in ("term:TOY_0001", "term:TOY_0002")}}, ctx)
-    st.create(draft(ctx, "slot:color", supersedes=b["id"]), ctx)
-    st.withdraw(b["id"])
-    st.mark_applied({a["id"]: {"on": "2026-10-22", "subject_hashes_after": {}, "created": [],
-                               "retired": []}})
+def test_yaml_store_has_no_write_path(toy):
+    """decisions.yaml is a record, not a place decisions are made."""
+    assert not any(hasattr(toy.store, m) for m in ("create", "update", "withdraw"))
 
-    def neutral(v):
-        return v.split("-", 1)[1] if isinstance(v, str) else v
-    out = []
-    for r in st.records():
-        r = {k: v for k, v in r.items()
-             if k not in ("origin", "rev", "vote_ids", "stale", "stale_reason", "stale_new_sid")}
-        r["id"], r["supersedes"] = neutral(r["id"]), neutral(r["supersedes"])
-        out.append(r)
-    return out
+
+def test_yaml_mark_applied(toy):
+    ctx = toy_ctx(toy)
+    landing.append_hosted(toy.cfg.decisions, toy.cfg.decisions,
+                          [store.normalize({**draft(ctx), "id": "H-0001", "status": "pending"})])
+    block = {"on": "2026-10-22", "subject_hashes_after": {"term:TOY_0001": "abc"},
+             "created": [], "retired": [], "renamed": {"term:X": "term:Y"}}
+    toy.store.mark_applied({"DEC-0001": block})
+    rec = toy.store.get("DEC-0001")
+    assert rec["status"] == "applied" and rec["applied"] == block
+    assert rec["origin"] == {"kind": "hosted", "ref": "H-0001"}
+    with pytest.raises(store.StoreError) as e:
+        toy.store.mark_applied({"DEC-0999": block})
+    assert e.value.status == 404
 
 
 @pytest.mark.postgres
-def test_records_identical_across_backends(toy, request):
+def test_records_survive_the_trip_to_decisions_yaml(toy, request, tmp_path):
+    """Every field a hosted decision has comes out the same in decisions.yaml
+    (ids renumbered, origin pointing back), key order too."""
+    from curation_workbench.store.pg import export_yaml
     ctx = toy_ctx(toy)
-    a = scripted(make_store("yaml", toy, request), ctx)
-    b = scripted(make_store("postgres", toy, request), ctx)
-    assert a == b
-    assert [list(r) for r in a] == [list(r) for r in b]   # key order too
+    pg = make_store("postgres", toy, request)
+    first = pg.create(draft(ctx), ctx)
+    pg.mark_applied({first["id"]: {"on": "2026-10-22", "subject_hashes_after": {}, "created": [],
+                                   "retired": []}})
+    landing_template = tmp_path / "landed.yaml"
+    export_yaml(pg, toy.cfg.decisions, landing_template, ids=[])
+    # H-0001 already landed in the repo (as DEC-0001); H-0002 supersedes it.
+    landing.append_hosted(toy.cfg.decisions, landing_template, [pg.get(first["id"])])
+    pg.create(draft(ctx, "term:TOY_0002", verdict="edit_description",
+                    operation={"op": "edit_description", "description": "Blue."},
+                    also_affects=["term:TOY_0001"], supersedes=first["id"],
+                    subject_hashes={s: ctx.subjects.get(s)["hash"] for s in ("term:TOY_0001", "term:TOY_0002")}),
+              ctx)
+    out = tmp_path / "decisions.yaml"
+    assert export_yaml(pg, landing_template, out) == {"H-0002": "DEC-0002"}
+    p = {k: v for k, v in pg.get("H-0002").items()
+         if k not in ("rev", "vote_ids", "stale", "stale_reason", "stale_new_sid")}
+    y = store.YamlStore(out).records()[-1]
+    assert (y["id"], y["supersedes"], y["origin"]) == ("DEC-0002", "DEC-0001", {"kind": "hosted", "ref": "H-0002"})
+    same = [k for k in p if k not in ("id", "supersedes", "origin")]
+    assert [k for k in y if k not in ("id", "supersedes", "origin")] == same      # key order too
+    assert {k: y[k] for k in same} == {k: p[k] for k in same}
