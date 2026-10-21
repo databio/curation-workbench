@@ -140,6 +140,11 @@ exactly as a real sync does. To try real Prosopia sign-in locally, set the
 `cwb serve` (local mode) is untouched. Tests: `scripts/test-postgres.sh`
 runs `tests/hosted/` (every hosted test needs a database).
 
+**Hosted deploy.** The service runs at https://curate.databio.org on goat (one
+image, three services: API, sync worker, isolated runner). The image,
+stack wiring, verifier and the first-deploy checklist are in
+[`deployment/deploy.md`](deployment/deploy.md).
+
 ## A project
 
 ```

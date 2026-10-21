@@ -41,6 +41,17 @@ derives the same status.json and review.json as `cwb regen`
 with Swarm isolation (`cwb hosted isolation-check` there), a real GitHub
 remote and webhook. See dev-docs/sync.md.
 
+Deploy pieces (2026-10-21): `deployment/` has the Dockerfile (one image for
+the API, worker and runner), `healthcheck.py`, `production.env` (pass
+references), `verify.sh` and the runbook `deploy.md`; the Swarm stack
+(`stacks/curate.yml`), `deploy.sh curate` wiring and the nginx block are in
+`cloud-management/gcp/compute`. The image was built and run locally against a
+throwaway Postgres (migrate, API, runner on an internal network, worker; the
+isolation check ends `ISOLATED` in a read-only, no-capability runner container;
+ONGA at its head snapshots in under 3 s; peaks: API 121 MiB, worker 165 MiB,
+runner 87 MiB). Not yet done (Nathan): the go-live steps in `deployment/deploy.md`
+(pass entries, database, Prosopia client, secret, nginx, DNS, first deploy).
+
 ## Behavior differences
 
 - **Protected-name refusals** read `X is protected (named in site/scripts/build-data.js); ...`
