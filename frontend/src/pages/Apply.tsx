@@ -161,6 +161,33 @@ export default function Apply() {
         ) : null}
       </div>
 
+      {can.apply ? (
+        <section className="card text-sm apply-explainer" data-testid="apply-explainer">
+          <h2 className="card__title">What applying does</h2>
+          <p className="mt-0">
+            A decision you make in Review is saved as <strong>pending</strong>: it is recorded, but the schema has not
+            changed yet. Applying turns pending decisions into real edits:
+          </p>
+          <ol>
+            <li>It edits the schema and mapping files the way each decision says (rename a term, add a link, make a field optional, ...).</li>
+            <li>It regenerates every file built from them and runs the project's checks.</li>
+            <li>It marks those decisions <strong>applied</strong>.</li>
+          </ol>
+          <p className="mb-0">
+            It is all or nothing: if any step fails, every file is put back as it was. It does not commit or push.
+            Afterwards, look over the changes (for example with <code>git diff</code>) and commit them.{' '}
+            <strong>Dry run</strong> shows the same changes without writing anything; the diff below is that preview.
+          </p>
+        </section>
+      ) : (
+        <section className="card text-sm apply-explainer" data-testid="apply-explainer">
+          <p className="m-0">
+            These decisions were made by curators here, but they have not changed the schema yet. The schema lives in the
+            project's git repository; decisions reach it when they are exported and applied there.
+          </p>
+        </section>
+      )}
+
       {log !== null ? (
         <pre ref={logRef} className="apply-log" data-testid="apply-log">
           {log}
@@ -222,7 +249,7 @@ export default function Apply() {
       <ConfirmDialog
         isOpen={confirm}
         title="Apply all"
-        message="Apply every pending decision to the working tree?"
+        message={`Edit the schema files for all ${p?.decisions.length ?? 0} pending decisions? Nothing is committed; you review and commit afterwards.`}
         confirmLabel="Apply all"
         onCancel={() => setConfirm(false)}
         onConfirm={async () => {

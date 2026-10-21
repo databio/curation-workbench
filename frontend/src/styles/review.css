@@ -534,3 +534,13 @@
   flex-wrap: wrap;
   gap: var(--space-2);
 }
+
+/* Apply page: what applying does. */
+.apply-explainer ol {
+  margin: var(--space-2) 0;
+  padding-left: var(--space-6);
+}
+
+.apply-explainer li + li {
+  margin-top: var(--space-1);
+}
