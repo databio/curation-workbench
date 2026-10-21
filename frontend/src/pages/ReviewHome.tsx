@@ -18,12 +18,11 @@ export default function ReviewHome() {
           <div>
             <h1 className="m-0">Review</h1>
             <p className="page__lede mt-2 mb-0">
-              Pick a kind of work. Each item asks one question; your answer is a vote (curators turn votes into
-              decisions).
+              Pick a question. Each answer is a vote; curators make the decisions.
             </p>
-            <p className="muted text-sm mt-1 mb-0" data-testid="progress">
-              {rv.progress.waiting} items waiting · {rv.progress.percent_settled}% settled ·{' '}
-              <Link to={allPath(project.slug)}>all items</Link>
+            <p className="muted text-sm mt-1 mb-0 tabular" data-testid="progress">
+              {rv.progress.waiting} waiting · {Math.round(rv.progress.percent_settled)}% settled ·{' '}
+              <Link to={allPath(project.slug)}>All items</Link>
             </p>
           </div>
 
@@ -31,7 +30,7 @@ export default function ReviewHome() {
             <section key={t.id} className="stack">
               <div>
                 <h2 className="m-0">
-                  {t.title} <span className="muted text-base font-normal">{t.total}</span>
+                  {t.title} <span className="muted text-base font-normal tabular">{t.total}</span>
                 </h2>
                 {t.blurb ? <p className="muted text-sm m-0">{t.blurb}</p> : null}
               </div>

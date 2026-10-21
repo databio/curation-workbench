@@ -20,7 +20,7 @@ describe('review home', () => {
   it('one short line, a progress line, and cards with only title, count and question', async () => {
     renderAt('/p/proj', fakeBackend(VOTER, { review: REVIEW }));
     expect(await screen.findByText('Vocabulary')).toBeInTheDocument();
-    expect(screen.getByTestId('progress')).toHaveTextContent('12 items waiting · 40.5% settled · all items');
+    expect(screen.getByTestId('progress')).toHaveTextContent('12 waiting · 41% settled · All items');
     const card = screen.getByRole('link', { name: /Links 7/ });
     expect(card).toHaveAttribute('href', '/p/proj/review/vocabulary/links');
     expect(card.textContent).toBe('Links7Linked?');
@@ -136,7 +136,7 @@ describe('approved page', () => {
     repository: { url: 'https://github.com/o/r', workflow_url: 'https://github.com/o/r/actions/workflows/curate.yml',
       commit: '0123456789abcdef', commit_url: 'https://github.com/o/r/commit/0123456789abcdef', branch: 'master', synced_at: null } });
     renderAt('/p/proj/approved', b);
-    expect(await screen.findByRole('heading', { name: 'Approved, waiting to reach the repository' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Approved' })).toBeInTheDocument();
     const waiting = await screen.findByTestId('waiting');
     expect(within(waiting).getAllByText('Keep as is')).toHaveLength(2);
     expect(within(waiting).queryByText('set_flags')).toBeNull();
@@ -144,6 +144,12 @@ describe('approved page', () => {
     expect(within(waiting).getByText(/fails the project's checks \(bad link\)/)).toBeInTheDocument();
     expect(within(waiting).getByText(/the item changed since this was decided/)).toBeInTheDocument();
     expect(within(waiting).getByText(/^Ann ·/)).toBeInTheDocument();           // the name, not the email
+    // How it works is folded away under one summary line; the list comes first.
+    const explainer = screen.getByTestId('apply-explainer');
+    expect(explainer.tagName).toBe('DETAILS');
+    expect(explainer).not.toHaveAttribute('open');
+    expect(waiting.compareDocumentPosition(explainer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    await userEvent.click(screen.getByText('How decisions reach the repository'));
     expect(screen.getByRole('link', { name: /See its runs/ })).toHaveAttribute('href', 'https://github.com/o/r/actions/workflows/curate.yml');
     expect(screen.getByRole('link', { name: '0123456789' })).toHaveAttribute('href', 'https://github.com/o/r/commit/0123456789abcdef');
     expect(within(screen.getByTestId('reached')).getByText('DEC-0161')).toBeInTheDocument();

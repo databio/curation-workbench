@@ -13,13 +13,17 @@ decision change. Project wording comes from the bundle: `review_types`
 An item (review.json version 2):
 
   {sid, kind, slug, title, container, container_label, browse, description,
-   reasons: [str], findings: [finding id], choices: [{text, detail, actions}],
+   reasons: [str], findings: [finding id],
+   choices: [{lead, text, detail, actions}],
    actions: [Action], editor: {field, value, placeholder} | null,
    group: str | null, hash, score}
 
   Action = {label, verdict, operation, rationale, evidence, also, tone, input,
-            confirm, answer}
+            confirm, group, answer}
 
+A choice's `lead` is a short muted word before its text ("Suggested",
+"Existing link"); an action's `group` is a lead word the UI shows once before
+a run of buttons that share it ("Accept" before the grade buttons).
 `answer` is the vote answer key: the first 12 hex characters of the SHA-1 of
 the canonical JSON of {verdict, operation, also, evidence} as built. One
 builder per `answers_kind`, ported from the ONGA site's `actionsFor()`.
@@ -91,10 +95,14 @@ def answer_key(verdict, operation, also, evidence):
 
 
 def action(label, verdict, rationale, *, operation=None, evidence=None, also=None,
-           tone="neutral", input=None, confirm=None):
+           tone="neutral", input=None, confirm=None, group=None):
     return {"label": label, "verdict": verdict, "operation": operation, "rationale": rationale,
             "evidence": evidence, "also": also, "tone": tone, "input": input, "confirm": confirm,
-            "answer": answer_key(verdict, operation, also, evidence)}
+            "group": group, "answer": answer_key(verdict, operation, also, evidence)}
+
+
+def choice(text, actions, *, lead=None, detail=None):
+    return {"lead": lead, "text": text, "detail": detail, "actions": actions}
 
 
 class Ctx:
@@ -224,7 +232,7 @@ def links(sid, found, payload, ctx):
             accept = [action(o["label"], "adopt_mapping",
                              _fmt(template, {"label": label, "phrase": o.get("phrase", "")}),
                              operation={**op, grade["field"]: o["value"]}, evidence=f["id"],
-                             tone="primary" if i == 0 else "neutral")
+                             tone="primary" if i == 0 else "neutral", group=grade.get("group"))
                       for i, o in enumerate(grade.get("options") or [])]
         else:
             accept = [action("Accept", "adopt_mapping", f"Accepted suggested link to {obj} ({label}).",
@@ -232,27 +240,28 @@ def links(sid, found, payload, ctx):
         detail = f"{source.upper()} · {float(s.get('score') or 0):.0%} similar"
         if s.get("definition"):
             detail += f" · {s['definition']}"
-        choices.append({"text": f"Suggested link: {label} ({obj})", "detail": detail, "actions": [
+        choices.append(choice(f"{label} ({obj})", [
             *accept,
             action("Reject", "reject_mapping", f"{label} is not a match.", operation=op,
-                   evidence=f["id"], tone="danger")]})
+                   evidence=f["id"], tone="danger")], lead="Suggested", detail=detail))
     unrev = _first(found, "unreviewed-mapping")
     m = unrev and UNREVIEWED_RE.search(unrev["message"])
     if m:
         op = {"predicate": m[1], "object": m[2]}
-        choices.append({"text": f"Existing link: {m[1]} {m[2]}", "detail": None, "actions": [
-            action("Confirm link", "adopt_mapping", f"Checked the existing link to {m[2]}; it is right.",
+        choices.append(choice(f"{m[1]} {m[2]}", [
+            action("Confirm", "adopt_mapping", f"Checked the existing link to {m[2]}; it is right.",
                    operation=op, evidence=unrev["id"], tone="primary"),
-            action("Remove link", "reject_mapping", f"The existing link to {m[2]} is wrong.",
-                   operation=op, evidence=unrev["id"], tone="danger")]})
+            action("Remove", "reject_mapping", f"The existing link to {m[2]} is wrong.",
+                   operation=op, evidence=unrev["id"], tone="danger")], lead="Existing link"))
     doc = _first(found, "mapping-target-is-doc-link")
     m = doc and DOC_LINK_RE.search(doc["message"])
     if m:
-        choices.append({"text": f"Link to a web page, not a term: {m[2]}", "detail": None, "actions": [
-            action("Remove link", "reject_mapping", "The link points at a documentation page, not a term.",
-                   operation={"predicate": m[1], "object": m[2]}, evidence=doc["id"], tone="primary")]})
+        choices.append(choice(m[2], [
+            action("Remove", "reject_mapping", "The link points at a documentation page, not a term.",
+                   operation={"predicate": m[1], "object": m[2]}, evidence=doc["id"], tone="primary")],
+            lead="Web page, not a term"))
     actions.append(action(
-        "No match exists", "keep",
+        "No match", "keep",
         ctx.text("No suitable term in outside ontologies; this stays {project}-only."),
         evidence=_id(_first(found, "no-mapping-at-all") or _first(found, "unmapped-high-usage")
                      or _first(found, "coverage-gap") or _first(found, "class-no-alignment"))))
@@ -268,10 +277,9 @@ def definitions(sid, found, payload, ctx):
     editor = {"field": "description", "value": desc if desc is not None else "",
               "placeholder": f"Write the {word}"}
     return [], [
-        action(f"Save new {word}", "edit_description", f"Rewrote the {word}.",
+        action(f"Save {word}", "edit_description", f"Rewrote the {word}.",
                input="description", evidence=_id(f), tone="primary"),
-        action(f"{word.capitalize()} is fine", "keep", f"{word.capitalize()} is clear as it is.",
-               evidence=_id(f)),
+        action("Fine as is", "keep", f"{word.capitalize()} is clear as it is.", evidence=_id(f)),
     ], editor
 
 
@@ -285,13 +293,13 @@ def duplicates(sid, found, payload, ctx):
         if not other or other not in ctx.subjects or ctx.subjects[other].get("retired"):
             continue
         them = ctx.name(other)
-        choices.append({"text": f'Same thing as "{them}"?', "detail": None, "actions": [
+        choices.append(choice(f'"{them}"?', [
             action(f'Merge into "{them}"', "merge", f'Same meaning as "{them}".', evidence=f["id"],
                    also=[other], tone="danger", operation={"into": other, "mappings": "move"},
-                   confirm=f'Merge "{me}" into "{them}"? "{me}" is removed from the schema when you apply.'),
-            action("Different things", "keep", f'Different from "{them}".', evidence=f["id"],
-                   also=[other]),
-        ]})
+                   confirm=f'Merge "{me}" into "{them}"? "{me}" is removed from the schema when the '
+                           'decision is applied.'),
+            action("Keep both", "keep", f'Different from "{them}".', evidence=f["id"], also=[other]),
+        ], lead="Same as"))
     compound = _first(found, "residual-compound")
     if compound:
         actions.append(action("Keep as one term", "keep_atomic",
@@ -303,7 +311,7 @@ def duplicates(sid, found, payload, ctx):
                               evidence=shared["id"], tone="primary"))
     inline = _first(found, "inline-enum")
     if inline:
-        actions.append(action("Leave it as is", "keep", "Reviewed; leave as is.", evidence=inline["id"]))
+        actions.append(action("Leave as is", "keep", "Reviewed; leave as is.", evidence=inline["id"]))
     return choices, actions, None
 
 
@@ -313,7 +321,8 @@ def keep_or_cut(sid, found, payload, ctx):
         action("Keep", "keep", "Worth keeping even though nothing uses it yet.", evidence=_id(f),
                tone="primary"),
         action("Delete", "delete", "Unused and not needed.", evidence=_id(f), tone="danger",
-               confirm=f'Delete "{ctx.name(sid)}"? It is removed from the schema when you apply.'),
+               confirm=f'Delete "{ctx.name(sid)}"? It is removed from the schema when the decision '
+                       'is applied.'),
     ], None
 
 
@@ -321,20 +330,20 @@ def fields(sid, found, payload, ctx):
     choices, actions, editor = [], [], None
     req = _first(found, "required-policy")
     if req:
-        choices.append({"text": "Should this field be required?", "detail": None, "actions": [
+        choices.append(choice("Make this field", [
             action("Required", "set_cardinality", "Records are meaningless without it; keep it required.",
                    operation={"required": True}, evidence=req["id"]),
             action("Recommended", "set_cardinality", "Useful but not essential; make it recommended.",
                    operation={"required": False, "recommended": True}, evidence=req["id"], tone="primary"),
             action("Optional", "set_cardinality", "Make it optional.",
                    operation={"required": False, "recommended": False}, evidence=req["id"]),
-        ]})
+        ]))
     ex = _first(found, "slot-no-examples")
     if ex:
         editor = {"field": "examples", "value": "", "placeholder": "One example value per line"}
         actions.append(action("Save examples", "set_examples", "Added examples.", input="examples",
                               evidence=ex["id"], tone="primary"))
-    actions.append(action("Leave it as it is", "keep", "Field is set up right as it is.",
+    actions.append(action("Leave as is", "keep", "Field is set up right as it is.",
                           evidence=_id(req or ex)))
     return choices, actions, editor
 

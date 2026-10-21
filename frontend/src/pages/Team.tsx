@@ -42,7 +42,7 @@ export default function Team() {
     <div className="page">
       <div>
         <h1 className="m-0">Team</h1>
-        <p className="page__lede text-sm mt-1">Voters answer review questions; curators also turn votes into decisions.</p>
+        <p className="page__lede text-sm mt-1">Voters vote; curators also decide.</p>
       </div>
       {msg ? <div className="banner banner--error" role="alert">{msg}</div> : null}
       <QueryState isPending={team.isPending} error={team.error} onRetry={team.refetch} isEmpty={members.length === 0} empty="No one is on this team yet.">

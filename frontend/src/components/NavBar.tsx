@@ -62,7 +62,7 @@ export function NavBar() {
         </button>
         <span className="nav__spacer" />
         <span className="toolbar">
-          {me.role ? <span className="badge badge--neutral">{me.role}</span> : null}
+          {me.role ? <span className="nav__role">{me.role}</span> : null}
           <UserMenu badge={null} />
         </span>
       </nav>

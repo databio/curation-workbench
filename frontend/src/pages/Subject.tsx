@@ -7,7 +7,7 @@ import { useBackend } from '../api/backend';
 import type { Decision, Panel, SubjectIndex } from '../api/types';
 import { DecisionControl } from '../components/DecisionControl';
 import { QueryState } from '../components/QueryState';
-import { OperationSummary } from '../components/ReviewItem';
+import { OperationSummary, personName } from '../components/ReviewItem';
 import { StateChip } from '../components/StateChip';
 import { nameOf, SubjectLink } from '../components/SubjectLink';
 import { useReview, useSubject, useSubjectIndex, useVerdicts } from '../hooks/useData';
@@ -36,12 +36,9 @@ export function Payload({ payload, hash, kind }: { payload: Record<string, unkno
   const rows = Object.entries(payload).filter(([k]) => !SHOWN_ELSEWHERE.has(k) || !Array.isArray(payload[k]));
   return (
     <section className="card">
-      <h2 className="card__title">Contents</h2>
-      <p className="muted text-xs mt-0">
-        What the schema says about this {kind}. A decision is tied to this content: if any of it changes later, the
-        decision is marked stale and needs another look.{' '}
-        <span title={hash}>(content id {hash.slice(0, 8)})</span>
-      </p>
+      <h2 className="card__title" title={`What the schema says about this ${kind}. A decision is tied to this content (id ${hash.slice(0, 8)}): if it changes later, the decision is marked stale.`}>
+        Contents
+      </h2>
       <dl className="payload">
         {rows.map(([k, v]) => (
           <div key={k} className="payload__row">
@@ -109,8 +106,8 @@ export function DecisionRow({ d, sid, label }: { d: Decision; sid: string; label
       <div className="flex flex-wrap items-center gap-2">
         <span className="badge badge--neutral" title={d.verdict}>{label}</span>
         <span className={`badge status-badge--${d.status}`}>{d.status}</span>
-        <span className="muted text-xs">
-          {d.decided_by} · {d.decided_on} · <span className="font-mono">{d.id}</span>
+        <span className="muted text-xs" title={d.decided_by}>
+          {personName(d.decided_by)} · {d.decided_on} · <span className="font-mono">{d.id}</span>
         </span>
         {d.subject !== sid ? (
           <span className="muted text-xs">
@@ -141,6 +138,14 @@ export default function Subject() {
   const waitingOn = sid ? (review.data?.tracks ?? []).flatMap((t) => t.types
     .filter((ty) => ty.sids?.includes(sid))
     .map((ty) => ({ to: typePath(project.slug, t.id, ty.id), title: `${t.title}: ${ty.title}` }))) : [];
+  // A review type id (`track/type`) in words, for the votes list.
+  const typeTitle = (id: string) => {
+    if (id === 'subject') return 'this page';
+    const [tr, ty] = id.split('/');
+    const t = review.data?.tracks.find((x) => x.id === tr);
+    const y = t?.types.find((x) => x.id === ty);
+    return t && y ? `${t.title}: ${y.title}` : id;
+  };
   const sssom = Array.isArray(rec?.payload.sssom) ? (rec!.payload.sssom as Record<string, string>[]) : [];
 
   return (
@@ -148,7 +153,7 @@ export default function Subject() {
       isEmpty={!!notFound} empty={`There is no item called ${slug}.`}>
       {v && rec ? (
         <div className="page">
-          <nav className="muted text-sm">
+          <nav className="crumbs">
             <Link to={projectPath(project.slug)}>Review</Link> › {name}
           </nav>
           <header className="card">
@@ -156,11 +161,11 @@ export default function Subject() {
               <div className="min-w-0">
                 <div className="eyebrow">{rec.kind}</div>
                 <h1 className="m-0 break-all">{name}</h1>
-                <div className="font-mono text-sm muted mt-1">{rec.sid}</div>
+                <div className="font-mono text-xs muted mt-1">{rec.sid}</div>
               </div>
               <div className="flex flex-col items-end gap-2">
                 <StateChip sid={rec.sid} index={index.data} />
-                <div className="muted text-sm" title="Queue priority: higher comes first in All items">
+                <div className="muted text-sm tabular" title="Queue priority: higher comes first in All items">
                   priority <span className="font-semibold">{v.status.score.toFixed(2)}</span>
                 </div>
               </div>
@@ -177,12 +182,17 @@ export default function Subject() {
               <dt>Source file</dt>
               <dd className="font-mono">{rec.file ?? '—'}</dd>
               <dt>Web page</dt>
-              <dd>{v.browse ? <a href={v.browse} target="_blank" rel="noreferrer">{v.browse}</a> : <span className="muted">none</span>}</dd>
+              <dd className="break-all">{v.browse ? <a href={v.browse} target="_blank" rel="noreferrer">{v.browse.replace(/^https?:\/\//, '')} ↗</a> : <span className="muted">none</span>}</dd>
             </dl>
             {waitingOn.length > 0 ? (
               <p className="text-sm mt-3 mb-0" data-testid="waiting-on">
-                <span className="muted">Waiting for an answer under:</span>{' '}
-                {waitingOn.map((w) => <Link key={w.to} to={w.to} className="type-tag">{w.title}</Link>)}
+                <span className="muted">Open on:</span>{' '}
+                {waitingOn.map((w, i) => (
+                  <span key={w.to}>
+                    {i > 0 ? ' · ' : ''}
+                    <Link to={w.to}>{w.title}</Link>
+                  </span>
+                ))}
               </p>
             ) : null}
             {rec.retired ? (
@@ -212,7 +222,7 @@ export default function Subject() {
                   <div className="overflow-x-auto">
                     <table className="table">
                       <thead>
-                        <tr><th>Relation</th><th>Linked term</th><th>Modifier</th><th>How it was made</th><th>Comment</th></tr>
+                        <tr><th>Relation</th><th>Linked term</th><th>Modifier</th><th>Source</th><th>Comment</th></tr>
                       </thead>
                       <tbody>
                         {sssom.map((m, i) => (
@@ -231,16 +241,15 @@ export default function Subject() {
               ) : null}
               {v.panels.map((p, i) => <PanelView key={i} panel={p} index={index.data} />)}
               <section className="card">
-                <h2 className="card__title">
+                <h2 className="card__title" title={`What the automatic checks flagged about this ${rec.kind}.`}>
                   Findings <span className="muted text-sm">{v.findings.length}</span>
                 </h2>
-                <p className="muted text-xs mt-0">What the automatic checks flagged about this {rec.kind}.</p>
                 {v.findings.length === 0 ? <p className="muted text-sm m-0">Nothing flagged.</p> : (
                   <ul className="finding-list">
                     {v.findings.map((f) => (
-                      <li key={f.id} title={`${f.id} · ${f.message}`}>
+                      <li key={f.id} title={`${f.rule} · ${f.severity} · ${f.id} · ${f.message}`}>
+                        <span className={`sev-dot sev-dot--${f.severity}`} />
                         <span className="flex-1 min-w-0">{f.text ?? f.message}</span>
-                        <span className={`rule-chip rule-chip--${f.severity}`}>{f.rule}</span>
                       </li>
                     ))}
                   </ul>
@@ -255,7 +264,7 @@ export default function Subject() {
                     <ul className="text-sm">
                       {v.votes.map((x) => (
                         <li key={x.id}>
-                          {x.user.name} · {x.review_type} · {x.proposal ? verdictLabel(x.proposal.verdict, rec.kind, verdicts.data) : x.answer}
+                          {x.user.name} · {typeTitle(x.review_type)} · {x.proposal ? verdictLabel(x.proposal.verdict, rec.kind, verdicts.data) : x.answer}
                           {x.stale ? ' (out of date)' : ''}
                           {x.comment ? <span className="muted"> · {x.comment}</span> : null}
                         </li>
@@ -284,13 +293,8 @@ export default function Subject() {
                 {rec.retired ? (
                   <p className="muted text-sm m-0">Retired items take no new decisions.</p>
                 ) : can.decide || can.vote ? (
-                  <>
-                    <p className="muted text-xs mt-0">
-                      Any action the review buttons do not offer: pick it, say why, and save.
-                    </p>
-                    <DecisionControl sid={rec.sid} kind={rec.kind} index={index.data} verdicts={verdicts.data}
-                      findingId={suggested?.id} suggestedVerdict={suggested?.suggested_verdict} />
-                  </>
+                  <DecisionControl sid={rec.sid} kind={rec.kind} index={index.data} verdicts={verdicts.data}
+                    findingId={suggested?.id} suggestedVerdict={suggested?.suggested_verdict} />
                 ) : (
                   <p className="muted text-sm m-0">You can read this project but not vote on it.</p>
                 )}

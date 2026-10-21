@@ -14,11 +14,15 @@ export interface Action {
   tone: 'primary' | 'neutral' | 'danger' | null;
   input: 'description' | 'examples' | null;
   confirm: string | null;
+  /** A lead word shown once before a run of buttons that share it ("Accept"). */
+  group?: string | null;
   /** The vote answer key (stable hash of verdict, operation, also, evidence). */
   answer: string;
 }
 
 export interface Choice {
+  /** A short muted word before the text ("Suggested", "Existing link"). */
+  lead?: string | null;
   text: string;
   detail: string | null;
   actions: Action[];

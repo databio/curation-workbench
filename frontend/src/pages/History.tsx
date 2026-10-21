@@ -4,7 +4,7 @@ import type { HistoryRow } from '../api/types';
 import { LazyList } from '../components/LazyList';
 import { QueryState } from '../components/QueryState';
 import { SubjectLink } from '../components/SubjectLink';
-import { OperationSummary } from '../components/ReviewItem';
+import { OperationSummary, personName } from '../components/ReviewItem';
 import { useHistory, useSubjectIndex, useVerdicts } from '../hooks/useData';
 import { verdictLabel } from '../lib/draft';
 
@@ -37,8 +37,8 @@ export default function History() {
     <div className="page">
       <div>
         <h1 className="m-0">History</h1>
-        <p className="page__lede text-sm mt-1">
-          Every decision ever recorded on this project, newest first. <span data-testid="count">Showing {shown.length} of {rows.length}.</span>
+        <p className="page__lede text-sm mt-1 tabular">
+          Every decision, newest first. <span data-testid="count">Showing {shown.length} of {rows.length}.</span>
         </p>
       </div>
       <form className="filters card" onSubmit={(e) => e.preventDefault()}>
@@ -69,8 +69,7 @@ export default function History() {
                 <tr className="align-top">
                   <td className="font-mono nowrap">{r.id}</td>
                   <td>
-                    <SubjectLink sid={r.now ?? r.subject} index={index.data}>{r.name}</SubjectLink>
-                    <div className="font-mono text-xs muted">{r.subject}</div>
+                    <span title={r.subject}><SubjectLink sid={r.now ?? r.subject} index={index.data}>{r.name}</SubjectLink></span>
                     {r.now ? <div className="text-xs muted">now <span className="font-mono">{r.now}</span></div> : null}
                     {(r.also_affects || []).length > 0 ? (
                       <div className="text-xs muted">also <span className="font-mono">{r.also_affects.join(', ')}</span></div>
@@ -81,7 +80,7 @@ export default function History() {
                     <OperationSummary op={r.operation} className="block text-xs mt-1 op-code" />
                   </td>
                   <td><span className={`badge status-badge--${r.status}`}>{r.status}</span></td>
-                  <td className="text-xs muted nowrap">{r.decided_by}<br />{r.decided_on}<br />{r.origin?.kind}</td>
+                  <td className="text-xs muted nowrap" title={`${r.decided_by} · ${r.origin?.kind ?? ''}`}>{personName(r.decided_by)}<br />{r.decided_on}</td>
                   <td>{r.rationale}</td>
                 </tr>
               )} />

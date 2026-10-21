@@ -327,8 +327,9 @@ reasons:                   # finding rule -> plain words on review rows
 answers:                   # per answers_kind settings
   links:
     predicates: {so: "ex:has_type", "*": "skos:relatedMatch"}   # by suggestion source
-    grades:                # sources whose Accept becomes one button per grade
-      so: {field: fit, rationale: "{label} {phrase} this.",
+    grades:                # sources whose Accept becomes one button per grade,
+      so: {field: fit, group: Accept,   # shown as a group led by `group`
+           rationale: "{label} {phrase} this.",
            options: [{label: Exact fit, value: exact, phrase: is exactly}]}
 more_links: [{label: Gaps, url: "https://example.org/gaps"}]
 tracks: [...]              # as before: tracks, types, rules, answers_kind, fallback

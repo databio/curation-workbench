@@ -87,6 +87,7 @@
   --form-label-width-narrow: 6rem;
   --form-row-gap: var(--space-2);
   --dot-size: 0.5rem;
+  --dot-offset: 0.4rem; /* lines a severity dot up with the first line of text */
   --z-toasts: 1000;
   --z-menu: 900;
 

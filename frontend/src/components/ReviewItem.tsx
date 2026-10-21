@@ -1,8 +1,9 @@
-// One row of a review type's page. Shows the subject in plain terms (name,
-// where it lives, its definition, why it is here) and the type's ready-made
-// answers as buttons. A click is a vote; curators also see the tally and can
-// turn it into a decision. Anything the buttons don't cover is one link away on the
-// subject page. Layout and save flow ported from ReviewItem.astro.
+// One row of a review type's page: the item in plain terms (name, where it
+// lives, its text, why it is here) and the type's ready-made answers as
+// buttons. A click is a vote; curators also see the tally and can turn it
+// into a decision. The note box and the full decision form stay out of the
+// way (a text button, and the item page) so the row carries only the words
+// the person must read.
 import { memo, useState } from 'react';
 import { Link } from 'react-router';
 import { saveErrorMessage, useBackend } from '../api/backend';
@@ -37,6 +38,9 @@ export function rowDone(s: RowState): boolean {
   return !!((s.mine && !s.mine.stale) || s.resolved || s.question?.state === 'resolved');
 }
 
+/** The person's name from a `Name <email>` string. */
+export const personName = (who: string) => who.split(' <')[0];
+
 /** `{field: value}` pairs of an operation as a short inline list. */
 export function OperationSummary({ op, className = '' }: { op: Record<string, unknown> | null | undefined; className?: string }) {
   const pairs = describeOperation(op);
@@ -52,11 +56,38 @@ export function OperationSummary({ op, className = '' }: { op: Record<string, un
   );
 }
 
+/**
+ * A run of buttons. Consecutive actions that share a `group` ("Accept") are
+ * drawn as one group with the word shown once before them.
+ */
+function Buttons({ actions, render }: { actions: Action[]; render: (a: Action) => React.ReactNode }) {
+  const out: React.ReactNode[] = [];
+  let i = 0;
+  while (i < actions.length) {
+    const g = actions[i].group;
+    if (!g) {
+      out.push(render(actions[i]));
+      i += 1;
+      continue;
+    }
+    const run: Action[] = [];
+    while (i < actions.length && actions[i].group === g) run.push(actions[i++]);
+    out.push(
+      <span key={`g-${g}-${i}`} className="btn-group">
+        <span className="btn-group__lead">{g}:</span>
+        {run.map(render)}
+      </span>,
+    );
+  }
+  return <>{out}</>;
+}
+
 function ReviewItemInner({ item, reviewType, index, state, onChanged }: ReviewItemProps) {
   const backend = useBackend();
   const { can, project } = backend;
   const verdicts = useVerdicts();
   const [note, setNote] = useState('');
+  const [noteOpen, setNoteOpen] = useState(false);
   const [editor, setEditor] = useState(item.editor?.value ?? '');
   const [msg, setMsg] = useState('');
   const [saving, setSaving] = useState(false);
@@ -132,15 +163,11 @@ function ReviewItemInner({ item, reviewType, index, state, onChanged }: ReviewIt
           )}
           <span className="review-item__where">
             {item.kind}
-            {item.container_label ? (
-              <>
-                {' '}in <span className="font-medium">{item.container_label}</span>
-              </>
-            ) : null}
+            {item.container_label ? <> · {item.container_label}</> : null}
           </span>
           {item.browse ? (
-            <a href={item.browse} className="review-item__browse" target="_blank" rel="noreferrer">
-              view in schema site
+            <a href={item.browse} className="review-item__browse" target="_blank" rel="noreferrer" title="Open on the project's site">
+              site ↗
             </a>
           ) : null}
         </div>
@@ -158,55 +185,67 @@ function ReviewItemInner({ item, reviewType, index, state, onChanged }: ReviewIt
         </ul>
       ) : null}
 
-      {state.mine?.stale ? <p className="review-item__stale">Your vote is out of date: the term changed. Vote again.</p> : null}
+      {state.mine?.stale ? <p className="review-item__stale">Your vote is out of date: the item changed. Vote again.</p> : null}
 
       {open ? (
         <div className="review-item__body">
           {item.choices.map((c) => (
-            <div key={c.text} className="review-item__choice">
+            // A choice with a detail line (a suggestion) stacks its buttons under the
+            // text so they sit in the same place on every row; a bare question keeps
+            // its buttons on the same line.
+            <div key={c.text} className={`review-item__choice${c.detail ? ' review-item__choice--stacked' : ''}`}>
               <div className="min-w-0 text-sm">
-                <div className="font-medium">{c.text}</div>
+                <div>
+                  {c.lead ? <span className="review-item__lead">{c.lead}</span> : null}
+                  <span className="font-medium">{c.text}</span>
+                </div>
                 {c.detail ? (
                   <div className="review-item__detail" title={c.detail}>
                     {c.detail}
                   </div>
                 ) : null}
               </div>
-              <div className="flex flex-wrap gap-2">{c.actions.map(button)}</div>
+              <div className="review-item__buttons">
+                <Buttons actions={c.actions} render={button} />
+              </div>
             </div>
           ))}
 
           {item.editor ? (
-            <label className="review-item__editor-label">
-              <span>{item.editor.field === 'description' ? 'Edit the text here, then save it:' : 'Examples, one per line:'}</span>
-              <textarea
-                className="form__input review-item__editor"
-                aria-label={item.editor.field === 'description' ? 'New definition' : 'Examples'}
-                rows={item.editor.field === 'description' ? 3 : 2}
-                placeholder={item.editor.placeholder}
-                value={editor}
-                onChange={(e) => setEditor(e.target.value)}
-              />
-            </label>
+            <textarea
+              className="form__input review-item__editor"
+              aria-label={item.editor.field === 'description' ? 'New definition' : 'Examples'}
+              rows={item.editor.field === 'description' ? 3 : 2}
+              placeholder={item.editor.placeholder}
+              value={editor}
+              onChange={(e) => setEditor(e.target.value)}
+            />
           ) : null}
 
           <div className="review-item__actions">
-            {item.actions.map(button)}
-            <input
-              type="text"
-              className="form__input review-item__note"
-              aria-label="Note"
-              placeholder="Why? (optional, saved with your answer)"
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-            />
+            <Buttons actions={item.actions} render={button} />
+            {noteOpen || note ? (
+              <input
+                type="text"
+                className="form__input review-item__note"
+                aria-label="Note"
+                placeholder="Note (optional)"
+                value={note}
+                autoFocus={noteOpen}
+                onChange={(e) => setNote(e.target.value)}
+              />
+            ) : (
+              <button type="button" className="link-button review-item__quiet" onClick={() => setNoteOpen(true)}>
+                Add a note
+              </button>
+            )}
+            {href ? (
+              <Link to={href} className="review-item__quiet">
+                More actions…
+              </Link>
+            ) : null}
           </div>
           {msg ? <p className="review-item__msg" role="status">{msg}</p> : null}
-          {href ? (
-            <Link to={href} className="review-item__more">
-              Need another action (rename, merge, move, add a link…)? Open its page →
-            </Link>
-          ) : null}
         </div>
       ) : msg ? (
         <p className="review-item__msg" role="status">{msg}</p>
@@ -247,21 +286,24 @@ function DoneLine({ state, voteLabel, decisionLabel, onUndo, onChange, canDecide
   if (state.resolved) {
     const d = state.resolved;
     return (
-      <span className="review-item__done" title={`${d.id} · ${d.verdict}`}>
-        ✓ Decided by {d.decided_by}: {decisionLabel(d)}
+      <span className="review-item__done" title={`${d.id} · ${d.verdict} · by ${personName(d.decided_by)}`}>
+        ✓ Decided: {decisionLabel(d)}
         {canDecide && d.status === 'pending' ? (
-          <button type="button" className="link-button ml-1" onClick={async () => {
-            await backend.withdraw(d);
-            onWithdrawn();
-          }}>
-            Withdraw
-          </button>
+          <>
+            {' '}·{' '}
+            <button type="button" className="link-button" onClick={async () => {
+              await backend.withdraw(d);
+              onWithdrawn();
+            }}>
+              Withdraw
+            </button>
+          </>
         ) : null}
       </span>
     );
   }
   if (state.question?.state === 'resolved' && state.question.outcome === 'no_action') {
-    return <span className="review-item__done">✓ Closed: nothing to do</span>;
+    return <span className="review-item__done">✓ Closed, nothing to do</span>;
   }
   if (state.mine) {
     return (
@@ -300,6 +342,10 @@ function Tally({ item, reviewType, index, question, voteLabel, resolved, onChang
   const sorted = [...question.answers].sort((a, b) => b.count - a.count);
   const lead = sorted[0];
   const tie = sorted.length > 1 && sorted[1].count === lead?.count;
+  const deciding_ = backend.can.decide && !resolved;
+  // The leading answer gets the one primary button; every other answer (and
+  // every answer on a tie) gets a small "Decide" beside its count.
+  const leadButton = deciding_ && lead?.proposal && !tie;
 
   const draftFrom = (proposal: NonNullable<Question['answers'][number]['proposal']>, rationale: string): DecisionDraft => {
     const also = proposal.also_affects ?? [];
@@ -331,34 +377,35 @@ function Tally({ item, reviewType, index, question, voteLabel, resolved, onChang
   return (
     <div className="tally">
       <div className="tally__line">
-        <span className="muted">Votes so far:</span>
+        <span className="muted">Votes</span>
         {sorted.map((a) => (
           <span key={a.answer} className={`tally__answer${question.mine?.answer === a.answer ? ' tally__answer--mine' : ''}`}>
-            {voteLabel(a.answer, a.proposal?.verdict)} ×{a.count}
+            {voteLabel(a.answer, a.proposal?.verdict)} <span className="tally__count">{a.count}</span>
             {a.stale ? <span className="muted"> ({a.stale} out of date)</span> : null}
-            {backend.can.decide && !resolved && a.proposal ? (
+            {deciding_ && a.proposal && !(leadButton && a === lead) ? (
               <button type="button" className="link-button ml-1" onClick={() => setDeciding({ answer: a.answer, voteId: a.vote_ids[0], proposal: a.proposal })}>
-                Decide this
+                Decide
               </button>
             ) : null}
           </span>
         ))}
         <button type="button" className="link-button" onClick={toggleVotes}>
-          {showVotes ? 'Hide votes' : 'Who voted'}
+          {showVotes ? 'Hide voters' : 'Voters'}
         </button>
+        {deciding_ ? (
+          <span className="tally__actions">
+            {leadButton ? (
+              <button type="button" className="btn btn--sm btn--primary" title="Make the leading answer the decision"
+                onClick={() => setDeciding({ answer: lead.answer, voteId: lead.vote_ids[0], proposal: lead.proposal })}>
+                Decide: {voteLabel(lead.answer, lead.proposal?.verdict)}
+              </button>
+            ) : null}
+            <button type="button" className="btn btn--sm" title="Close this question without a decision" onClick={() => setNoAction(true)}>
+              Close, nothing to do
+            </button>
+          </span>
+        ) : null}
       </div>
-      {backend.can.decide && !resolved ? (
-        <div className="tally__actions">
-          <button type="button" className="btn btn--sm" disabled={!lead || tie || !lead.proposal}
-            title={tie ? 'The vote is tied: pick one with "Decide this"' : 'Make the leading answer the decision'}
-            onClick={() => lead && setDeciding({ answer: lead.answer, voteId: lead.vote_ids[0], proposal: lead.proposal })}>
-            Decide from tally
-          </button>
-          <button type="button" className="btn btn--sm" title="Close this question without a decision" onClick={() => setNoAction(true)}>
-            Nothing to do
-          </button>
-        </div>
-      ) : null}
       {showVotes && votes ? (
         <ul className="tally__votes">
           {votes.map((v) => (
@@ -373,7 +420,7 @@ function Tally({ item, reviewType, index, question, voteLabel, resolved, onChang
       {msg ? <p className="review-item__msg">{msg}</p> : null}
       <ConfirmDialog
         isOpen={!!deciding}
-        title="Turn votes into a decision"
+        title="Decide"
         message={deciding?.proposal ? (
           <div className="stack">
             <div>
@@ -384,7 +431,7 @@ function Tally({ item, reviewType, index, question, voteLabel, resolved, onChang
           </div>
         ) : ''}
         confirmLabel="Decide"
-        textarea={{ label: 'Change the reason (optional)', maxLength: 2000, placeholder: deciding?.proposal?.rationale ?? '' }}
+        textarea={{ label: 'Reason (edit if needed)', maxLength: 2000, placeholder: deciding?.proposal?.rationale ?? '' }}
         onCancel={() => setDeciding(null)}
         onConfirm={async (text) => {
           const d = deciding!;
@@ -405,9 +452,9 @@ function Tally({ item, reviewType, index, question, voteLabel, resolved, onChang
       />
       <ConfirmDialog
         isOpen={noAction}
-        title="Nothing to do"
+        title="Close without deciding"
         message="Close this question with no decision? The votes stay on record."
-        confirmLabel="Close it"
+        confirmLabel="Close"
         textarea={{ label: 'Note (optional)', maxLength: 2000 }}
         onCancel={() => setNoAction(false)}
         onConfirm={async (note) => {

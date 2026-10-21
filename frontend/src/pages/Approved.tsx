@@ -1,14 +1,14 @@
-// Approved decisions waiting to reach the project's repository, and how they
-// get there. The site never edits the repository: a GitHub Action in the repo
-// (or `cwb pull` on a laptop) fetches these with a read-only key, applies them
-// and opens a pull request. Nothing on this page edits files.
+// Approved decisions waiting to reach the project's repository. The site never
+// edits the repository: a GitHub Action in the repo (or `cwb pull` on a
+// laptop) fetches these with a read-only key, applies them and opens a pull
+// request. The list comes first; how it works sits under a closed <details>.
 import { useState, type ReactNode } from 'react';
 import { Link } from 'react-router';
 import { useBackend } from '../api/backend';
 import type { Decision, PendingDecision } from '../api/types';
 import { QueryState } from '../components/QueryState';
 import { SubjectLink } from '../components/SubjectLink';
-import { OperationSummary } from '../components/ReviewItem';
+import { OperationSummary, personName } from '../components/ReviewItem';
 import { usePending, useSubjectIndex, useVerdicts } from '../hooks/useData';
 import { kindOfSid, verdictLabel } from '../lib/draft';
 import { projectPath } from '../lib/paths';
@@ -68,7 +68,7 @@ export default function Approved() {
       <div className="flex flex-wrap items-center gap-2">
         <span title={d.subject}><SubjectLink sid={d.subject} index={index.data} className="font-semibold" /></span>
         <span title={d.verdict}>{verdictLabel(d.verdict, kindOfSid(d.subject), verdicts.data)}</span>
-        <span className="muted text-xs" title={d.id}>{d.decided_by.split(' <')[0]} · {d.decided_on}</span>
+        <span className="muted text-xs" title={`${d.id} · ${d.decided_by}`}>{personName(d.decided_by)} · {d.decided_on}</span>
       </div>
       <OperationSummary op={d.operation} className="block text-xs mt-1" />
       {extra}
@@ -78,42 +78,13 @@ export default function Approved() {
   return (
     <div className="page">
       <div>
-        <h1 className="m-0">Approved, waiting to reach the repository</h1>
+        <h1 className="m-0">Approved</h1>
         {p ? (
-          <p className="page__lede text-sm mt-1">
-            {p.decisions.length} decision{p.decisions.length === 1 ? '' : 's'} waiting.
+          <p className="page__lede text-sm mt-1 tabular">
+            {p.decisions.length} waiting to reach the repository.
           </p>
         ) : null}
       </div>
-
-      <section className="card text-sm apply-explainer" data-testid="apply-explainer">
-        <p className="mt-0">
-          Curators approved these here, but the schema has not changed yet. The schema lives in the project's git
-          repository, and this site never edits it. Decisions get there like this:
-        </p>
-        <ol>
-          <li>
-            The repository's <strong>curate</strong> GitHub Action fetches the approved decisions (daily, or when
-            someone runs it), applies them, runs the project's checks, and opens a pull request.
-            {repo?.workflow_url ? <> <a href={repo.workflow_url} target="_blank" rel="noreferrer">See its runs ↗</a></> : null}
-          </li>
-          <li>Someone reviews and merges the pull request.</li>
-          <li>This site sees the new commit and moves the decisions to "Reached the repository" below.</li>
-        </ol>
-        <p className="mb-0">
-          On a laptop, <code>cwb pull {project.slug}</code> in a checkout does step 1 without the pull request; you look over the changes and commit them.
-          {repo?.commit ? (
-            <>
-              {' '}Last synced commit:{' '}
-              {repo.commit_url ? (
-                <a href={repo.commit_url} target="_blank" rel="noreferrer"><code>{repo.commit.slice(0, 10)}</code></a>
-              ) : <code>{repo.commit.slice(0, 10)}</code>}
-              {repo.branch ? <> on <code>{repo.branch}</code></> : null}.
-            </>
-          ) : null}
-        </p>
-        <RepoKey />
-      </section>
 
       <QueryState isPending={pending.isPending} error={pending.error} onRetry={pending.refetch}
         isEmpty={!!p && p.decisions.length === 0 && !(p.applied ?? []).length}
@@ -140,6 +111,35 @@ export default function Approved() {
           </section>
         ) : null}
       </QueryState>
+
+      <details className="card details text-sm" data-testid="apply-explainer">
+        <summary className="details__summary">How decisions reach the repository</summary>
+        <p>
+          The schema lives in the project's git repository; this site never edits it.
+        </p>
+        <ol className="details__steps">
+          <li>
+            The repository's <strong>curate</strong> GitHub Action fetches the approved decisions (daily, or when
+            someone runs it), applies them, runs the project's checks, and opens a pull request.
+            {repo?.workflow_url ? <> <a href={repo.workflow_url} target="_blank" rel="noreferrer">See its runs ↗</a></> : null}
+          </li>
+          <li>Someone reviews and merges the pull request.</li>
+          <li>This site sees the new commit and moves the decisions to "Reached the repository".</li>
+        </ol>
+        <p className="mb-0">
+          On a laptop, <code>cwb pull {project.slug}</code> in a checkout does step 1 without the pull request.
+          {repo?.commit ? (
+            <>
+              {' '}Last synced commit:{' '}
+              {repo.commit_url ? (
+                <a href={repo.commit_url} target="_blank" rel="noreferrer"><code>{repo.commit.slice(0, 10)}</code></a>
+              ) : <code>{repo.commit.slice(0, 10)}</code>}
+              {repo.branch ? <> on <code>{repo.branch}</code></> : null}.
+            </>
+          ) : null}
+        </p>
+        <RepoKey />
+      </details>
     </div>
   );
 }

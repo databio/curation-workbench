@@ -49,20 +49,46 @@ def test_toy_items(toy):
     red = next(i for i in items["vocabulary", "links"] if i["sid"] == "term:TOY_0001")
     # No `reasons` in the toy's review_types.yaml: the raw lint message.
     assert red["reasons"] == ["'red' skos:exactMatch ex:RED has no mapping justification"]
-    assert [c["text"] for c in red["choices"]] == ["Existing link: skos:exactMatch ex:RED"]
-    assert [a["verdict"] for a in red["choices"][0]["actions"]] == ["adopt_mapping", "reject_mapping"]
+    assert [(c["lead"], c["text"]) for c in red["choices"]] == [("Existing link", "skos:exactMatch ex:RED")]
+    assert [(a["label"], a["verdict"]) for a in red["choices"][0]["actions"]] == \
+        [("Confirm", "adopt_mapping"), ("Remove", "reject_mapping")]
+    assert red["actions"][0]["label"] == "No match"
     assert red["actions"][0]["rationale"] == \
         "No suitable term in outside ontologies; this stays Toy-only."
     blue = items["vocabulary", "definitions"][0]
     assert blue["editor"] == {"field": "description", "value": "", "placeholder": "Write the definition"}
-    assert [a["label"] for a in blue["actions"]] == ["Save new definition", "Definition is fine"]
+    assert [a["label"] for a in blue["actions"]] == ["Save definition", "Fine as is"]
     signoff = items["schema", "signoff"]
     assert all(i["actions"][0]["verdict"] == "keep" for i in signoff)
     assert {i["group"] for i in signoff} >= {"things", "Other modules"}
     # keep-or-cut has no toy rows; its builder on its own:
     _, acts, _ = answers.keep_or_cut("term:TOY_0001", [], {}, answers.Ctx(bundle))
     assert [a["verdict"] for a in acts] == ["keep", "delete"]
-    assert acts[1]["confirm"] == 'Delete "red"? It is removed from the schema when you apply.'
+    assert acts[1]["confirm"] == \
+        'Delete "red"? It is removed from the schema when the decision is applied.'
+
+
+def test_grade_group_and_choice_leads():
+    """Grade buttons carry the yaml's `group` lead word; a suggestion choice
+    has a `lead` and the candidate as its text."""
+    bundle = {"subjects": {"subjects": {"term:A": {"kind": "term", "name": "A", "label": "alpha",
+                                                   "payload": {}}}},
+              "review_types": {"title": "P", "answers": {"links": {
+                  "predicates": {"*": "skos:relatedMatch"},
+                  "grades": {"so": {"field": "fit", "group": "Accept", "options": [
+                      {"label": "Exact fit", "value": "exact", "phrase": "is exactly"},
+                      {"label": "Broader", "value": "broad", "phrase": "is broader than"}]}}}}},
+              "suggestions": {"map:1": {"object": "SO:1", "label": "thing", "source": "so",
+                                        "score": 0.61, "definition": "A thing."}}}
+    found = [{"id": "map:1", "rule": "mapping-suggestion", "message": "m", "subjects": ["term:A"]}]
+    choices, actions, _ = answers.links("term:A", found, {}, answers.Ctx(bundle))
+    assert [(c["lead"], c["text"], c["detail"]) for c in choices] == \
+        [("Suggested", "thing (SO:1)", "SO · 61% similar · A thing.")]
+    acts = choices[0]["actions"]
+    assert [(a["label"], a["group"], a["tone"]) for a in acts] == \
+        [("Exact fit", "Accept", "primary"), ("Broader", "Accept", "neutral"), ("Reject", None, "danger")]
+    assert acts[0]["operation"]["fit"] == "exact"
+    assert actions[0]["label"] == "No match" and actions[0]["group"] is None
 
 
 def test_answer_keys():

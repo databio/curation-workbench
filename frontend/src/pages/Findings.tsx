@@ -1,4 +1,4 @@
-// Open findings grouped by rule, each rule expandable into its findings.
+// Open findings grouped by check (rule), each group expandable into its findings.
 import { useMemo, useState } from 'react';
 import type { Finding } from '../api/types';
 import { LazyList } from '../components/LazyList';
@@ -15,6 +15,12 @@ export function groupFindings(findings: Finding[]): [string, Finding[]][] {
     || b[1].length - a[1].length || a[0].localeCompare(b[0]));
 }
 
+/** A rule id in words: `missing-thing` -> "Missing thing". */
+export const ruleName = (rule: string) => {
+  const words = rule.replace(/[-_]+/g, ' ');
+  return words.charAt(0).toUpperCase() + words.slice(1);
+};
+
 export default function Findings() {
   const findings = useFindings();
   const index = useSubjectIndex();
@@ -25,8 +31,7 @@ export default function Findings() {
       <div>
         <h1 className="m-0">Findings</h1>
         <p className="page__lede text-sm mt-1">
-          Everything the automatic checks flagged and nobody has settled yet, grouped by check. These are what put items
-          on the review pages. Open a check to see its items.
+          What the automatic checks flagged and nobody has settled, by check. Open a check to see its items.
         </p>
       </div>
       <QueryState isPending={findings.isPending} error={findings.error} onRetry={findings.refetch} isEmpty={groups.length === 0}
@@ -35,10 +40,10 @@ export default function Findings() {
           {groups.map(([rule, list]) => (
             <li key={rule} className="card">
               <button type="button" className="finding-group__head" aria-expanded={open === rule}
-                onClick={() => setOpen(open === rule ? null : rule)}>
-                <span className={`rule-chip rule-chip--${list[0].severity}`}>{rule}</span>
-                <span className="muted">{list[0].severity}</span>
-                <span className="font-semibold">{list.length}</span>
+                title={`${rule} · ${list[0].severity}`} onClick={() => setOpen(open === rule ? null : rule)}>
+                <span className={`sev-dot sev-dot--${list[0].severity}`} />
+                <span className="font-medium">{ruleName(rule)}</span>
+                <span className="muted tabular">{list.length}</span>
               </button>
               {open === rule ? (
                 <LazyList as="ul" className="finding-list mt-2" items={list} keyOf={(f) => f.id}

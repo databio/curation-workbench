@@ -25,7 +25,10 @@ describe('review type page', () => {
     act(() => triggerIntersection());
     await waitFor(() => expect(rows()).toHaveLength(80));
     expect(screen.getByTestId('progress')).toHaveTextContent('0 of 500 decided');
-    expect(screen.getByTestId('hint')).toHaveTextContent('Decide from tally');
+    // No hint sentence, no per-row note box or "open its page" sentence: the row is the item and its buttons.
+    expect(screen.queryByTestId('hint')).toBeNull();
+    expect(screen.queryByLabelText('Note')).toBeNull();
+    expect(screen.queryByText(/Need another action/)).toBeNull();
   });
 
   it('empty states: nothing of this kind, all answered, or no search match', async () => {
@@ -33,7 +36,7 @@ describe('review type page', () => {
     expect(await screen.findByTestId('empty')).toHaveTextContent('No items of this kind right now.');
     cleanup();
     renderAt(PATH, fakeBackend(VOTER, { page: page([item(1)]), questions: [voted('term:T1')] }));
-    expect(await screen.findByTestId('empty')).toHaveTextContent('All 1 items here are answered. Untick "Hide ones I answered" to see them.');
+    expect(await screen.findByTestId('empty')).toHaveTextContent('All 1 are answered. Untick "Hide answered" to see them.');
     fireEvent.change(screen.getByLabelText('Search'), { target: { value: 'zzz' } });
     expect(screen.getByTestId('empty')).toHaveTextContent('Nothing here matches your search.');
   });
@@ -44,7 +47,7 @@ describe('review type page', () => {
     await screen.findByText('term 2');
     await waitFor(() => expect(row('term:T1')).toBeNull());
     expect(screen.getByTestId('progress')).toHaveTextContent('1 of 3 answered');
-    fireEvent.click(screen.getByLabelText(/Hide ones I answered/));
+    fireEvent.click(screen.getByLabelText(/Hide answered/));
     await screen.findByText('term 1');
     fireEvent.change(screen.getByLabelText('Search'), { target: { value: 'NEEDLE' } });
     await waitFor(() => expect(rows()).toHaveLength(2));
@@ -59,6 +62,7 @@ describe('review type page', () => {
     });
     renderAt(PATH, b);
     await screen.findByText('term 1');
+    await userEvent.click(screen.getByRole('button', { name: 'Add a note' }));   // the box appears on demand
     await userEvent.type(screen.getByLabelText('Note'), 'Because.');
     await userEvent.click(screen.getByRole('button', { name: 'Keep' }));
     await waitFor(() => expect(b.answer).toHaveBeenCalledTimes(1));
@@ -127,9 +131,9 @@ describe('review type page', () => {
     });
     renderAt(PATH, b);
     await screen.findByText('term 1');
-    await userEvent.click(screen.getByRole('button', { name: 'Approve all in G' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Approve all 4' }));
     const dialog = await screen.findByRole('dialog');
-    expect(dialog).toHaveTextContent('Approve all 4 undecided items in G as "looks right"? Each one is saved as your vote.');
+    expect(dialog).toHaveTextContent('Vote "Looks right" on all 4 items in G?');
     await userEvent.click(within(dialog).getByRole('button', { name: 'Approve all' }));
     expect(await screen.findByText(/Stopped after 2 of 4/)).toBeInTheDocument();
     expect(b.answer.mock.calls.map((c) => c[0].sid)).toEqual(['term:T1', 'term:T2', 'term:T3']);
@@ -153,14 +157,16 @@ describe('votes and tallies', () => {
     const b = fakeBackend(CURATOR, { page: page([it1]), questions: [question()] });
     renderAt(PATH, b);
     await screen.findByText('term 1');
-    expect(await screen.findByText(/Merge ×2/)).toBeInTheDocument();
-    expect(screen.getByText(/1 out of date/)).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: 'Decide from tally' }));
+    const merge = await screen.findByText('Merge', { selector: '.tally__answer' });
+    expect(merge.parentElement).toHaveTextContent('Merge 2 (1 out of date)');
+    // The leading answer gets the one primary button; the other answer a small Decide of its own.
+    await userEvent.click(screen.getByRole('button', { name: 'Decide: Merge' }));
     await userEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Decide' }));
     await waitFor(() => expect(b.resolve).toHaveBeenCalledWith({
       sid: 'term:T1', reviewType: 'vocabulary/signoff', outcome: 'decision', fromVote: 7,
     }));
-    await userEvent.click(screen.getAllByRole('button', { name: 'Decide this' })[1]);
+    expect(screen.getAllByRole('button', { name: 'Decide' })).toHaveLength(1);
+    await userEvent.click(screen.getByRole('button', { name: 'Decide' }));
     const dialog = await screen.findByRole('dialog');
     await userEvent.type(within(dialog).getByRole('textbox'), 'Edited.');
     await userEvent.click(within(dialog).getByRole('button', { name: 'Decide' }));
@@ -169,11 +175,13 @@ describe('votes and tallies', () => {
     })));
   });
 
-  it('a tie disables Decide from tally', async () => {
+  it('a tie has no leading answer: every answer gets its own Decide', async () => {
     const q = question();
     q.answers[1].count = 2;
     renderAt(PATH, fakeBackend(CURATOR, { page: page([it1]), questions: [q] }));
-    expect(await screen.findByRole('button', { name: 'Decide from tally' })).toBeDisabled();
+    expect(await screen.findAllByRole('button', { name: 'Decide' })).toHaveLength(2);
+    expect(screen.queryByRole('button', { name: /^Decide:/ })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Close, nothing to do' })).toBeInTheDocument();
   });
 
   it('voters vote and see no decide buttons; their vote shows with Change and Retract', async () => {
@@ -183,10 +191,10 @@ describe('votes and tallies', () => {
     });
     renderAt(PATH, b);
     // Answered rows start hidden; show them.
-    await userEvent.click(await screen.findByLabelText(/Hide ones I answered/));
+    await userEvent.click(await screen.findByLabelText(/Hide answered/));
     expect(await screen.findByText(/Your vote: Different/)).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Decide from tally' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Decide this' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Decide/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /nothing to do/ })).toBeNull();
     expect(screen.getByTestId('progress')).toHaveTextContent('1 of 1 answered');
     await userEvent.click(screen.getByRole('button', { name: 'Change' }));
     await userEvent.click(screen.getByRole('button', { name: 'Merge' }));
@@ -203,7 +211,7 @@ describe('votes and tallies', () => {
       page: page([it1]),
       questions: [question({ mine: { vote_id: 9, answer: choiceB.answer, proposal: null, comment: null, stale: true } })],
     }));
-    await userEvent.click(await screen.findByLabelText(/Hide ones I answered/));
-    expect(await screen.findByText('Your vote is out of date: the term changed. Vote again.')).toBeInTheDocument();
+    await userEvent.click(await screen.findByLabelText(/Hide answered/));
+    expect(await screen.findByText('Your vote is out of date: the item changed. Vote again.')).toBeInTheDocument();
   });
 });

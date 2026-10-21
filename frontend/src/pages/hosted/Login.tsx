@@ -20,10 +20,9 @@ export default function Login() {
       {sessionWasLost() ? <div className="banner">Your session expired. Sign in again.</div> : null}
       {params.get('error') ? <div className="banner banner--error">Sign-in failed. Please try again.</div> : null}
       <p className="muted">
-        A place for a team to review a schema's terms and fields: each click is a vote, and curators turn votes into
-        decisions.
+        Review a schema with your team: each answer is a vote, and curators make the decisions.
       </p>
-      <p className="muted">Sign in with your Prosopia account. New accounts wait for an admin to approve them.</p>
+      <p className="muted">Sign in with Prosopia. New accounts wait for approval.</p>
       <button type="button" className="btn btn--primary" onClick={() => {
         clearSessionLost();
         login(undefined, window.location.origin + returnTo);

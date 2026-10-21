@@ -57,10 +57,10 @@ export default function AllItems() {
   return (
     <div className="page">
       <div>
-        <Link to={projectPath(project.slug)} className="text-sm">← Review</Link>
+        <nav className="crumbs"><Link to={projectPath(project.slug)}>Review</Link> › All items</nav>
         <h1 className="m-0">All items</h1>
-        <p className="page__lede text-sm mt-1">
-          Every item still waiting for a decision, most urgent first. <span data-testid="count">Showing {shown.length} of {rows.length}.</span>
+        <p className="page__lede text-sm mt-1 tabular">
+          Every item still waiting, most urgent first. <span data-testid="count">Showing {shown.length} of {rows.length}.</span>
         </p>
       </div>
       <form className="filters card" onSubmit={(e) => e.preventDefault()}>
@@ -101,20 +101,25 @@ export default function AllItems() {
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
                     <span title={r.sid}><SubjectLink sid={r.sid} index={index.data} className="font-semibold" /></span>
-                    <StateChip sid={r.sid} index={index.data} />
+                    {r.state === 'stale' ? <StateChip sid={r.sid} index={index.data} /> : null}
                   </div>
                   <div className="muted text-xs mt-1">
                     {r.kind}{r.layer !== null ? ` · layer ${r.layer}` : ''}
                     {r.container ? <> · <SubjectLink sid={r.container} index={index.data} /></> : null}
                   </div>
                   {r.types.length ? (
-                    <div className="flex flex-wrap gap-2 mt-1 text-xs">
-                      {r.types.map((t) => <Link key={`${t.track}/${t.type}`} to={typePath(project.slug, t.track, t.type)} className="type-tag">{t.title}</Link>)}
+                    <div className="mt-1 text-xs">
+                      {r.types.map((t, i) => (
+                        <span key={`${t.track}/${t.type}`}>
+                          {i > 0 ? ' · ' : ''}
+                          <Link to={typePath(project.slug, t.track, t.type)}>{t.title}</Link>
+                        </span>
+                      ))}
                     </div>
                   ) : null}
                 </div>
-                <div className="text-right" title="Queue priority: higher comes first">
-                  <div className="text-lg font-bold">{r.score.toFixed(2)}</div>
+                <div className="text-right tabular" title="Queue priority: higher comes first">
+                  <div className="text-lg font-semibold">{r.score.toFixed(2)}</div>
                   <div className="muted text-xs">priority</div>
                 </div>
               </div>

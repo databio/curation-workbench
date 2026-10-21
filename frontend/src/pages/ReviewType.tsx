@@ -1,6 +1,6 @@
-// One review type's page: its question, then every item of that type with
-// ready-made answers (ReviewItem); each click is a vote. Items with a `group` (sign-off) render
-// under group headings with "Approve all in {group}".
+// One review type's page: breadcrumb, title, question, then every item of
+// that type with ready-made answers (ReviewItem); each click is a vote. Items
+// with a `group` (sign-off) render under group headings with "Approve all".
 import { useCallback, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router';
 import { saveErrorMessage, useBackend } from '../api/backend';
@@ -92,30 +92,26 @@ export default function ReviewType() {
   }
 
   const answered = can.decide ? 'decided' : 'answered';
-  const hideLabel = can.decide ? 'Hide decided' : 'Hide ones I answered';
-  const hint = can.decide
-    ? 'Click one answer per item to vote. Under a row with votes, "Decide from tally" turns them into a decision.'
-    : 'Click one answer per item. It is your vote; curators turn votes into decisions.';
+  const hideLabel = `Hide ${answered}`;
   const emptyText = items.length === 0
     ? 'No items of this kind right now.'
     : search.trim()
       ? 'Nothing here matches your search.'
-      : `All ${items.length} items here are ${answered}. Untick "${hideLabel}" to see them.`;
+      : `All ${items.length} are ${answered}. Untick "${hideLabel}" to see them.`;
+  const approveLabel = approving ? approveAction(approving.rows[0])?.label ?? 'Looks right' : '';
   return (
     <QueryState isPending={page.isPending} error={page.error} onRetry={page.refetch}>
       {page.data ? (
         <div className="page">
           <div>
-            <Link to={projectPath(project.slug)} className="text-sm">
-              ← Review
-            </Link>
-            <div className="eyebrow mt-1">{page.data.track.title}</div>
+            <nav className="crumbs">
+              <Link to={projectPath(project.slug)}>Review</Link> › {page.data.track.title}
+            </nav>
             <h1 className="m-0">{page.data.type.title}</h1>
-            {page.data.type.question ? <p className="text-lg mt-2 mb-0">{page.data.type.question}</p> : null}
+            {page.data.type.question ? <p className="text-lg mt-1 mb-0">{page.data.type.question}</p> : null}
             {page.data.type.help ? <p className="page__lede text-sm mt-1">{page.data.type.help}</p> : null}
-            <p className="page__hint mt-2 mb-0" data-testid="hint">{hint}</p>
             <div className="toolbar mt-3">
-              <span className="muted" data-testid="progress">
+              <span className="muted tabular" data-testid="progress">
                 {doneCount} of {items.length} {answered}
               </span>
               <label className="form__choice">
@@ -138,11 +134,11 @@ export default function ReviewType() {
                   {name ? (
                     <div className="review-group__head">
                       <h2 className="m-0">
-                        {name} <span className="muted text-sm font-normal">({rows.length})</span>
+                        {name} <span className="muted text-sm font-normal tabular">{rows.length}</span>
                       </h2>
                       {(can.decide || can.vote) && undone.length > 0 ? (
                         <button type="button" className="btn btn--sm" onClick={() => setApproving({ group: name, rows: undone })}>
-                          Approve all in {name}
+                          Approve all {undone.length}
                         </button>
                       ) : null}
                     </div>
@@ -163,7 +159,7 @@ export default function ReviewType() {
           <ConfirmDialog
             isOpen={!!approving}
             title="Approve all"
-            message={approving ? `Approve all ${approving.rows.length} undecided items in ${approving.group} as "looks right"? Each one is saved as your vote.` : ''}
+            message={approving ? `Vote "${approveLabel}" on all ${approving.rows.length} items in ${approving.group}?` : ''}
             confirmLabel="Approve all"
             onCancel={() => setApproving(null)}
             onConfirm={async () => {

@@ -141,7 +141,8 @@ export function DecisionControl({ sid, kind, index, verdicts, findingId, suggest
         {latest ? (
           <>
             Latest: <span title={latest.verdict}>{verdictLabel(latest.verdict, kind, verdicts)}</span> · {latest.status} ·{' '}
-            {latest.decided_by} · {latest.decided_on} · <span className="font-mono">{latest.id}</span>
+            <span title={latest.decided_by}>{latest.decided_by.split(' <')[0]}</span> · {latest.decided_on} ·{' '}
+            <span className="font-mono">{latest.id}</span>
             {latest.rationale ? <span className="decision-control__rationale">{latest.rationale}</span> : null}
           </>
         ) : (
