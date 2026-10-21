@@ -101,6 +101,20 @@ def pg_engine(pg_url):
         admin.dispose()
 
 
+def seed_users(engine, *ids):
+    """Snapgate accounts with these ids: votes and hosted decisions point at
+    `snapgate_users` (migration 022), so store tests that vote as user 1, 2, ...
+    create those accounts first."""
+    from sqlalchemy import text
+    with engine.begin() as conn:
+        for i in ids:
+            conn.execute(text("INSERT INTO snapgate_users (id, google_id, email, name, status) "
+                              "VALUES (:i, :g, :e, :n, 'APPROVED') ON CONFLICT (id) DO NOTHING"),
+                         {"i": i, "g": f"seed-{i}", "e": f"user{i}@example.org", "n": f"User {i}"})
+        conn.execute(text("SELECT setval(pg_get_serial_sequence('snapgate_users', 'id'), "
+                          "(SELECT max(id) FROM snapgate_users))"))
+
+
 # ---------------------------------------------------------------- sync tier (plan 4)
 #
 # `sync_env`: a migrated schema (pg_engine), the toy project as a throwaway

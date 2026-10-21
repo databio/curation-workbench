@@ -74,9 +74,8 @@ annotation, id scheme, examples dir) are now options in `workbench.yaml`.
   the full decision form, apply with dry run). Items are built in Python
   (`answers.py`, review.json version 2); every item equals the ONGA site's
   `itemsFor()` on all 10 review types (`tests/test_onga_review_items.py`).
-  The hosted backend (`frontend/src/api/hosted.ts`) is written to the hosted
-  plan's routes and tested with a mocked fetch only; the hosted service does
-  not exist yet. Still to do, with Nathan's go-ahead: cut ONGA over (delete
+  The hosted backend (`frontend/src/api/hosted.ts`) talks to the hosted
+  service below. Still to do, with Nathan's go-ahead: cut ONGA over (delete
   its Astro queue pages, `make curate` runs `cwb serve`), then drop the
   daemon's CORS support.
 - Point ONGA at this package (plan 6): move `adapters/onga/` into the ONGA repo
@@ -84,8 +83,18 @@ annotation, id scheme, examples dir) are now options in `workbench.yaml`.
   in `curation/plugin/`, review types in `curation/review_types.yaml`), replace
   its scripts/workbench and the five scripts with `cwb`, and switch its Makefile.
   Then register ONGA as the first resident (dev-docs/sync.md).
-- The hosted multi-user version: Prosopia sign-in, teams, the API and
-  deployment. (Done: votes and hosted decisions in Postgres; the sync worker,
+- Hosted service (2026-10-21): `cwb hosted serve`, a FastAPI app with
+  Prosopia sign-in through vendored snapgate 5.1.0, invite-only accounts
+  (pending until a superadmin approves), per-project teams (voter, curator),
+  votes and tallies, curators resolving a question into an `H-` decision
+  (linked votes, tally as evidence) or no action, team and project admin, and
+  the read routes with the local daemon's bodies (`views`). It reads plan 4's
+  published snapshots and never runs plugin code; `cwb hosted admin
+  dev-snapshot` publishes a local folder in dev. Routes: `hosted/API.md`;
+  tests: `tests/hosted/` (postgres tier). Checked end to end locally with
+  demo sign-in in headless Chromium (toy project and ONGA). Still to do:
+  deployment at curate.databio.org (plan 5) and the Prosopia `curate` client.
+- (Done earlier: votes and hosted decisions in Postgres; the sync worker,
   runner and resident projects.)
 - ONGA's `curation/verdicts.yaml` cannot be read by PyYAML (a flow map at line
   255 uses `?`); ruamel reads it. Harmless today, but worth fixing in ONGA.

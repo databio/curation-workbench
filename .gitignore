@@ -9,3 +9,4 @@ out/
 frontend/node_modules/
 frontend/tsconfig.tsbuildinfo
 src/curation_workbench/web/
+var/

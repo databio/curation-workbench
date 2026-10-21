@@ -44,3 +44,52 @@ def test_local_cli_parser_loads_no_sqlalchemy():
             "with contextlib.redirect_stdout(io.StringIO()):\n"
             "    try:\n        cli.main(['--help'])\n    except SystemExit:\n        pass")
     assert [m for m in loaded_after(code) if not m.startswith("curation_workbench")] == []
+
+
+def _imports(path):
+    import ast
+    tree = ast.parse(path.read_text())
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for a in node.names:
+                yield a.name
+        elif isinstance(node, ast.ImportFrom):
+            yield ("." * node.level) + (node.module or "")
+
+
+def test_only_hosted_imports_hosted_fastapi_or_snapgate():
+    """Outside curation_workbench/hosted/, only cli.py names the hosted package
+    (its lazy `from .hosted import cli`); nothing imports fastapi or snapgate."""
+    from pathlib import Path
+
+    import curation_workbench
+    pkg = Path(curation_workbench.__file__).parent
+    for path in sorted(pkg.rglob("*.py")):
+        rel = path.relative_to(pkg)
+        if rel.parts[0] == "hosted":
+            continue
+        for name in _imports(path):
+            assert not name.startswith(("fastapi", "snapgate", "starlette", "uvicorn")), (rel, name)
+            if "hosted" in name.split("."):
+                assert rel.as_posix() == "cli.py", (rel, name)
+
+
+def test_hosted_never_imports_the_local_daemon():
+    from pathlib import Path
+
+    import curation_workbench
+    hosted = Path(curation_workbench.__file__).parent / "hosted"
+    for path in sorted(hosted.rglob("*.py")):
+        for name in _imports(path):
+            assert name.rsplit(".", 1)[-1] != "server" and not name.endswith("server.py"), (path, name)
+            assert name not in ("..server", "...server", "curation_workbench.server"), (path, name)
+
+
+def test_local_cli_help_loads_no_hosted_service_code():
+    code = ("import contextlib, io\nfrom curation_workbench import cli\n"
+            "with contextlib.redirect_stdout(io.StringIO()):\n"
+            "    try:\n        cli.main(['hosted', '--help'])\n    except SystemExit:\n        pass")
+    loaded = loaded_after(code)
+    assert [m for m in loaded if m.startswith(("fastapi", "snapgate", "sqlalchemy"))] == []
+    assert set(loaded) <= {"curation_workbench.hosted", "curation_workbench.hosted.cli",
+                           "curation_workbench.hosted.sync", "curation_workbench.hosted.sync.cli"}

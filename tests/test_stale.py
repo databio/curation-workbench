@@ -7,6 +7,7 @@ import shutil
 from pathlib import Path
 
 import pytest
+from conftest import seed_users
 from sqlalchemy import select
 
 from curation_workbench import snapshot, store
@@ -28,6 +29,7 @@ def env(pg_engine, tmp_path):
     shutil.copytree(TOY, root)
     bundle = snapshot.build(Workbench.open(root / "workbench.yaml"))
     pid = projects.create_project(pg_engine, "toy", "Toy")["id"]
+    seed_users(pg_engine, 1, 2, 3)
     with pg_engine.begin() as conn:
         rid = residents.ensure_dev_resident(conn, pid, str(root))
     st = PgStore(pg_engine, pid)

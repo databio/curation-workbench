@@ -13,8 +13,8 @@ stamps each decision as applied. Automatic **lint** findings and a ranked
 kinds of work with one question each.
 
 In local mode everything is plain files in git and there is no database. A
-hosted, multi-user mode (in progress) keeps votes and hosted decisions in
-Postgres; see [Storage](#storage).
+hosted, multi-user mode keeps people, teams, votes and hosted decisions in
+Postgres; see [Hosted mode](#hosted-mode) and [Storage](#storage).
 
 It was extracted from ONGA (Ontology of Genomic Annotations), which is its
 first project; see `adapters/onga/`.
@@ -24,7 +24,7 @@ first project; see `adapters/onga/`.
 ```bash
 uv venv && uv pip install -e ".[test]"          # tests include the Postgres store's
 uv pip install -e ".[postgres]"                 # hosted store only (SQLAlchemy + psycopg 3)
-uv pip install -e ".[hosted]"                   # hosted mode (store + sync worker)
+uv pip install -e ".[hosted]"                   # hosted mode (store, sync worker, API service)
 ```
 
 ## Commands
@@ -62,7 +62,83 @@ cwb hosted resident add --project onga --repo https://github.com/databio/onga \
 cwb hosted resident list | show | check | plugin-diff | approve-plugin --tree T |
     revoke-plugin | sync [--wait] | update | disable | rotate-webhook-secret <slug>
 cwb hosted isolation-check                   # in the worker task: prove the runner is isolated
+cwb hosted serve [--port 8134] [--reload]    # the hosted API + review UI (uvicorn)
+cwb hosted admin add-member --project onga --email E --role voter|curator
+cwb hosted admin dev-snapshot --project toy --config tests/fixtures/toy/workbench.yaml  # dev only
 ```
+
+## Hosted mode
+
+A multi-user version of the review UI at `https://curate.databio.org`
+(`cwb hosted serve`, a FastAPI app in `curation_workbench.hosted`). People sign
+in with their **Prosopia** account through vendored snapgate (`src/snapgate`,
+the same wiring as Pigeon). It is invite-only:
+
+1. A person signs in. Their new account is **pending**; they see a "waiting
+   for approval" page.
+2. A superadmin (`SNAPGATE_SUPERADMIN_EMAILS`) approves the account at
+   `/admin/accounts` (snapgate's `/auth/admin/users`).
+3. The superadmin puts the person on a project's **curation team** as a
+   **voter** or a **curator** (the project's Team page, or
+   `cwb hosted admin add-member`).
+
+Team members **vote** on review questions (one subject in one review type);
+**curators** read the vote counts and turn a question into a real decision
+(or close it with no action). Votes never become decisions on their own.
+Hosted decisions get `H-NNNN` ids and go back to the repo as a pull request
+through `cwb db export`. The schema stays in git and the service never edits
+it: each project's generated data (the snapshot bundle and the derived
+status and review queue) comes from plan 4's sync worker (`cwb hosted
+worker`, dev-docs/sync.md), which the API reads from Postgres. The API never
+runs plugin code. Agents use API keys (`Authorization: Bearer cwb_...`, made
+on the Settings page) with the scopes `curation:read`, `curation:vote` and
+`curation:decide`. Every route is in `src/curation_workbench/hosted/API.md`.
+
+| Variable | Meaning |
+|---|---|
+| `CWB_ENV` | `dev`, `test` or `production` (unset = production) |
+| `CWB_DATABASE_URL` / `POSTGRES_*` | the database (see Storage) |
+| `CWB_PUBLIC_URL` | `https://curate.databio.org`; https, and equal to `FRONTEND_URL`, in production |
+| `CWB_FRONTEND_DIST` | built SPA folder (default the packaged `curation_workbench/web/`) |
+| `CWB_CLIENT_IP_HEADER` | header with the real client IP (production: `CF-Connecting-IP`) |
+| `CWB_RATE_LIMITS`, `CWB_RL_<BUCKET>` | `off`; `count/seconds` per bucket (`USER_REQUESTS`, `BAD_CREDENTIAL_PER_IP`) |
+| `OIDC_ISSUER`, `OIDC_CLIENT_ID` (`curate`), `OIDC_CLIENT_SECRET`, `OIDC_REDIRECT_URI`, `OIDC_LABEL` (`Prosopia`) | Prosopia sign-in (snapgate) |
+| `JWT_SECRET_KEY`, `SESSION_SECRET_KEY` | snapgate secrets (32+ characters) |
+| `FRONTEND_URL`, `ALLOWED_ORIGINS`, `RATE_LIMIT_CLIENT_IP_HEADER` | snapgate redirects, CORS, its login limiter's client IP |
+| `SNAPGATE_SUPERADMIN_EMAILS`, `SNAPGATE_ADMIN_EMAILS` | site roles (browser session only); production needs a superadmin |
+| `DEBUG`, `DEMO_LOGIN` | dev only; refused in production |
+| `CWB_SYNC_DIR`, `CWB_RUNNER_URL`, ... | the sync worker (dev-docs/sync.md) |
+
+A production boot refuses `DEMO_LOGIN`/`DEBUG`, snapgate's test secrets, an
+http public URL, an `OIDC_REDIRECT_URI` outside `CWB_PUBLIC_URL`, a
+`FRONTEND_URL` other than it, and an empty superadmin list.
+
+Dev run (a local Postgres, the toy project, demo sign-in instead of Prosopia):
+
+```bash
+uv venv && uv pip install -e ".[hosted,test]"
+npm --prefix frontend ci && npm --prefix frontend run build
+scripts/dev-db.sh start
+export CWB_ENV=dev CWB_DATABASE_URL="$(scripts/dev-db.sh url)" CWB_SYNC_DIR=var/sync \
+       DEMO_LOGIN=true SNAPGATE_SUPERADMIN_EMAILS=admin@demo.local \
+       JWT_SECRET_KEY=dev-only-0123456789abcdef0123456789 SESSION_SECRET_KEY=dev-only-abcdef0123456789abcdef0123 \
+       FRONTEND_URL=http://127.0.0.1:8134 ALLOWED_ORIGINS=http://127.0.0.1:8134,http://127.0.0.1:5190
+cwb db migrate
+cwb db project add toy --name "Toy schema"
+cwb hosted admin dev-snapshot --project toy --config tests/fixtures/toy/workbench.yaml
+cwb hosted worker &                         # re-derives the queue after each vote or decision
+cwb hosted serve --reload --port 8134       # http://127.0.0.1:8134/ (API docs at /docs)
+# sign in: POST /auth/demo-login/admin (the SPA's /login uses Prosopia), then add yourself:
+cwb hosted admin add-member --project toy --email admin@demo.local --role curator
+```
+
+`dev-snapshot` is the worker's stand-in for a local folder: it builds the
+snapshot in-process and publishes it to a disabled `dev:<path>` resident
+exactly as a real sync does. To try real Prosopia sign-in locally, set the
+`OIDC_*` variables to the `curate` Prosopia client (its redirect URIs include
+`http://127.0.0.1:8134/auth/login/callback`) and drop `DEMO_LOGIN`.
+`cwb serve` (local mode) is untouched. Tests: `scripts/test-postgres.sh`
+runs `tests/hosted/` (every hosted test needs a database).
 
 ## A project
 

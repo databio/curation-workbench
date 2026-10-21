@@ -27,7 +27,7 @@ from ..validate import (FIELDS, STALE_REASONS, StoreError, check_updatable, chec
 from .tables import decision_votes, decisions, projects, votes
 
 # Keys a record may carry that are not stored as fields or `extra`.
-INTERNAL_KEYS = ("rev", "vote_ids", "stale", "stale_reason", "stale_new_sid")
+INTERNAL_KEYS = ("rev", "vote_ids", "stale", "stale_reason", "stale_new_sid", "decided_by_user_id")
 STALE_KINDS = {"vote": votes, "decision": decisions}
 
 _CONSTRAINT_ERRORS = {
@@ -246,8 +246,10 @@ class PgStore:
 
     # ------------------------------------------------------------ decision writes
 
-    def create(self, rec, ctx, *, expect_token=None, vote_ids=()) -> dict:
-        """Validate and insert `rec` as the project's next H- decision."""
+    def create(self, rec, ctx, *, expect_token=None, vote_ids=(), decided_by_user_id=None) -> dict:
+        """Validate and insert `rec` as the project's next H- decision.
+        `decided_by_user_id` is the signed-in account (plan 2); it is stored in
+        its own column, never in the record."""
         vote_ids = list(vote_ids or ())
         if not all(isinstance(v, int) and not isinstance(v, bool) for v in vote_ids):
             raise StoreError(400, ["vote_ids must be vote ids (integers)"])
@@ -282,6 +284,7 @@ class PgStore:
                     raise StoreError(400, errors)
 
             new_id = conn.execute(decisions.insert().values(project_id=self.project_id,
+                                                            decided_by_user_id=decided_by_user_id,
                                                             **_record_to_row(rec))
                                   .returning(decisions.c.id)).scalar_one()
             if linked:
@@ -304,7 +307,8 @@ class PgStore:
             raise StoreError(409, [f"{row.dec_id} changed since it was read "
                                    f"(rev {expect_rev}, current {row.rev}); reload"], current=cur)
 
-    def update(self, dec_id, rec, ctx, *, expect_token=None, expect_rev=None) -> dict:
+    def update(self, dec_id, rec, ctx, *, expect_token=None, expect_rev=None,
+               decided_by_user_id=None) -> dict:
         """Validate and replace pending decision `dec_id`. Clears its stale marks
         (the new version was validated against the current hashes)."""
         with self._conn() as conn:
@@ -318,6 +322,8 @@ class PgStore:
             validate(rec, ctx.subjects, ctx.verdicts, known_ids=self._known_ids(conn, ctx), wb=ctx.wb)
             values = _record_to_row(rec)
             values.pop("dec_id")
+            if decided_by_user_id is not None:
+                values["decided_by_user_id"] = decided_by_user_id
             conn.execute(update(decisions).where(decisions.c.id == row.id).values(
                 rev=decisions.c.rev + 1, updated_at=func.now(), stale_since_snapshot_id=None,
                 stale_reason=None, stale_new_sid=None, **values))

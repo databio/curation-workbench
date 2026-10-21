@@ -19,6 +19,9 @@
     cwb hosted worker                            the sync worker (needs the hosted extra)
     cwb hosted resident add|list|show|...        resident projects (superadmin operator)
     cwb hosted isolation-check                   prove the runner is isolated
+    cwb hosted serve [--port 8134] [--reload]    the hosted API + review UI
+    cwb hosted admin add-member --project S --email E --role voter|curator
+    cwb hosted admin dev-snapshot --project S --config workbench.yaml   (dev only)
 
 Global flags: -c/--config (default ./workbench.yaml), --root (project tree;
 overrides the config), --out (where generated files go; default the curation dir).
@@ -219,6 +222,12 @@ def _extra_metadata():
         pass
     else:
         out.append(sync_tables)
+    try:
+        from .hosted.app import schema_metadata
+    except ImportError:
+        pass
+    else:
+        out.extend(m for m in schema_metadata() if m not in out)
     return tuple(out)
 
 
@@ -320,8 +329,8 @@ def main(argv=None):
     p.add_argument("--port", type=int, default=8150)
     p.set_defaults(fn=cmd_runner)
     _db_parser(sub)
-    from .hosted.sync import cli as sync_cli
-    sync_cli.add_parser(sub)
+    from .hosted import cli as hosted_cli
+    hosted_cli.add_parser(sub)
     args = ap.parse_args(argv)
     if args.cmd in NO_WORKBENCH:
         return args.fn(None, args) or 0

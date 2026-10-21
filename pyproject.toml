@@ -8,9 +8,25 @@ dependencies = ["pyyaml>=6", "ruamel.yaml>=0.18"]
 [project.optional-dependencies]
 # Hosted mode's decision store (psycopg 3 only; never psycopg2).
 postgres = ["sqlalchemy>=2.0,<2.2", "psycopg[binary]>=3.2"]
-# Hosted mode: the store plus the sync worker (the API service adds its own deps here).
-hosted = ["sqlalchemy>=2.0,<2.2", "psycopg[binary]>=3.2"]
-test = ["pytest>=8", "sqlalchemy>=2.0,<2.2", "psycopg[binary]>=3.2"]
+# Hosted mode: the store, the sync worker and the API service (`cwb hosted serve`),
+# with vendored snapgate's own requirements. snapgate uses the engine it is
+# given (psycopg 3), so no psycopg2.
+hosted = [
+  "curation-workbench[postgres]",
+  "fastapi>=0.110",
+  "uvicorn[standard]>=0.27",
+  "sqlmodel>=0.0.21",
+  "pydantic>=2.6",
+  "pydantic-settings>=2.1",
+  "authlib>=1.3",
+  "httpx>=0.27",
+  "httpcore>=1.0",
+  "python-jose[cryptography]>=3.3",
+  "bcrypt>=4",
+  "slowapi>=0.1.9",
+  "itsdangerous>=2.1",
+]
+test = ["pytest>=8", "sqlalchemy>=2.0,<2.2", "psycopg[binary]>=3.2", "httpx>=0.27"]
 
 [project.scripts]
 cwb = "curation_workbench.cli:main"
@@ -20,7 +36,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/curation_workbench"]
+packages = ["src/curation_workbench", "src/snapgate"]
 # The built review UI (`npm --prefix frontend run build`) is gitignored but
 # shipped as package data, so `cwb serve` needs no Node at run time.
 artifacts = ["src/curation_workbench/web/"]
@@ -28,4 +44,9 @@ artifacts = ["src/curation_workbench/web/"]
 [tool.pytest.ini_options]
 markers = [
   "postgres: needs CWB_TEST_POSTGRES_URL pointing at a throwaway Postgres database (scripts/test-postgres.sh)",
+]
+filterwarnings = [
+  "ignore::DeprecationWarning:authlib.*",
+  "ignore:The httpx module is deprecated",
+  "ignore:Using `httpx` with `starlette.testclient` is deprecated",
 ]

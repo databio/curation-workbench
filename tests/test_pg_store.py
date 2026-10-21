@@ -8,7 +8,7 @@ import threading
 from pathlib import Path
 
 import pytest
-from conftest import ADAPTER
+from conftest import ADAPTER, seed_users
 from test_store_contract import draft, toy, toy_ctx  # noqa: F401  (toy is a fixture)
 
 sqlalchemy = pytest.importorskip("sqlalchemy")
@@ -51,6 +51,7 @@ pytestmark = pytest.mark.postgres
 
 @pytest.fixture
 def project(pg_engine):
+    seed_users(pg_engine, 1, 2, 3, 7)
     return PgStore(pg_engine, projects.create_project(pg_engine, "toy", "Toy")["id"])
 
 
@@ -85,8 +86,10 @@ def vote(ctx, sid="term:TOY_0001", review_type="vocabulary/links", answer="keep"
 
 def test_migrations(pg_engine):
     files = [p.name for p in migrate.migration_files()]
-    assert files == ["010_projects.sql", "011_decisions.sql", "012_votes.sql",
-                     "013_decision_votes.sql", "040_residents_sync.sql"]
+    assert files == ["001_snapgate.sql", "010_projects.sql", "011_decisions.sql", "012_votes.sql",
+                     "013_decision_votes.sql", "020_project_members.sql",
+                     "021_question_resolutions.sql", "022_user_fks.sql", "040_residents_sync.sql",
+                     "090_snapgate_useradmin.sql"]
     with pg_engine.connect() as conn:
         ledger = sorted(r[0] for r in conn.execute(text("SELECT filename FROM schema_migrations")))
     assert ledger == files
@@ -120,6 +123,7 @@ def test_projects(pg_engine):
 # ---------------------------------------------------------------- scoping, tokens
 
 def test_project_scoping(pg_engine, ctx):
+    seed_users(pg_engine, 1)
     a = PgStore(pg_engine, projects.create_project(pg_engine, "aa", "A")["id"])
     b = PgStore(pg_engine, projects.create_project(pg_engine, "bb", "B")["id"])
     ra = a.create(draft(ctx), ctx)
