@@ -38,7 +38,7 @@ cwb -c workbench.yaml regen [--check]      # all of the above, in order
 cwb -c workbench.yaml snapshot [--out F]   # the commit-phase bundle as JSON (see below)
 cwb derive --snapshot F --decisions D [--out DIR]  # status.json + review.json from a bundle
 cwb -c workbench.yaml apply [--dry-run] [--ids DEC-0001 ...] [--emit pending.json]
-cwb -c workbench.yaml serve [--port 8781]  # local decision daemon (loopback only)
+cwb -c workbench.yaml serve [--port 8781] [--ui DIR]  # local daemon + review UI (loopback only)
 ```
 
 Global flags: `--root` (the project tree; overrides the config) and `--out`
@@ -143,9 +143,17 @@ everything project-specific goes through these hooks:
 | `wb.protected_names` | `(ctx, section) -> {name: reason}` | class/enum rename, move, delete |
 | `wb.routes` | `(method, prefix, fn(api, tail))` | daemon |
 | `wb.regen` | `(wb, out_dir)` | `cwb regen`, in-process apply regen |
+| `wb.suggestions` | `(wb) -> {finding id: {object, label, source, score, definition}}` | review UI: `links` answers (bundle `suggestions`) |
+| `wb.browse_url` | `(wb, subject) -> url \| None` (one function, not a list) | review UI: "view in schema site" (bundle `browse`) |
+| `wb.subject_panels` | `(wb) -> {sid: [{title, text?, links?: [{label, href?, sid?}], table?: {columns, rows}}]}` | review UI: subject page (bundle `panels`) |
+| `wb.review_prompts` | `(wb) -> {sid: [{title, text, source, suggested_verdict, suggested_operation, decide_on}]}` | review UI: subject page (bundle `prompts`) |
 
 Signals and findings are computed once per commit, so they may not read
 decisions: a signal's `ctx` has `wb`, `subjects` and `labels`, nothing else.
+The four review UI hooks also run only at snapshot time (`snapshot.review_hooks`);
+while they run, `wb.snapshot_view` is `{subjects, labels, signals}` (signals
+unmasked, no decisions). Their output rides in the bundle, so derive, the
+daemon's request handlers and the hosted API run no plugin code.
 
 **Hosted mode** (plugins run only in the isolated runner, and only from a
 plugin tree a superadmin approved): `plugin_dir` is required when `plugins`
@@ -154,6 +162,65 @@ modules it imports must sit beside it (and be imported at module top level);
 every config path must stay inside the repo; `apply:`, `wb.routes` and
 `wb.regen` are ignored with a warning. Plugins may import only the standard
 library, `yaml`, `ruamel.yaml` and `curation_workbench`.
+
+## Review UI
+
+A React app (`frontend/`, the house stack: React 19, react-router 7, Vite 8)
+that `cwb serve` serves from the same port as its API. Build it once (needs
+Node >= 20.19); the build lands in `src/curation_workbench/web/` (gitignored,
+shipped as package data), so running it needs no Node:
+
+```bash
+npm --prefix frontend ci && npm --prefix frontend run build   # style guard + tsc + vite
+cwb -c workbench.yaml serve                                    # open http://127.0.0.1:8781/
+npm --prefix frontend run dev        # dev loop: Vite on :5190, proxies /api to the daemon
+npm --prefix frontend test           # Vitest
+```
+
+Menu: **Review** (one card per review type; each type page lists its items
+with one-click answers), **Apply** (pending decisions, dry run, apply all),
+**More** (History, All items, Findings, and the project's `more_links`). A
+subject page has the full decision form. Without a build the daemon serves
+the API only and says so.
+
+The browser has no answer logic and names no project: `cwb review` builds
+every item (title, plain-language reasons, choices, ready-made answers) in
+`answers.py` from the snapshot bundle, and the daemon's read routes return
+bodies built by `views.py` (the hosted API calls the same functions). One
+bundle serves both modes, picked at run time from `GET /api/config`; hosted
+mode (votes, tallies, curator decisions, team admin) talks only through
+`frontend/src/api/hosted.ts`. The hosted service (`cwb hosted serve`) serves
+the same `web/` folder with an SPA fallback; for hosted dev run Vite with
+`VITE_DEV_BACKEND=http://127.0.0.1:8134`.
+
+### review_types.yaml (version 2)
+
+```yaml
+version: 2                 # required; version 1 files are refused
+title: MyProject           # display name; `{project}` in default answer rationales
+reasons:                   # finding rule -> plain words on review rows
+  unmapped-high-usage:
+    pattern: 'has (?P<n>\d+) files'   # Python regex searched in the message
+    text: "Used by {n:,} files."      # named groups fill it (all-digit groups become ints)
+    else: "Used by many files."       # when the pattern does not match (default: raw message)
+  no-mapping-at-all: {text: "Not linked.", hide_if: [unmapped-high-usage]}
+  mapping-suggestion: {hide: true}
+  similar-terms: {pattern: 'similarity (?P<score>[\d.]+)', text: 'Like "{other}" ({score}).'}
+answers:                   # per answers_kind settings
+  links:
+    predicates: {so: "ex:has_type", "*": "skos:relatedMatch"}   # by suggestion source
+    grades:                # sources whose Accept becomes one button per grade
+      so: {field: fit, rationale: "{label} {phrase} this.",
+           options: [{label: Exact fit, value: exact, phrase: is exactly}]}
+more_links: [{label: Gaps, url: "https://example.org/gaps"}]
+tracks: [...]              # as before: tracks, types, rules, answers_kind, fallback
+```
+
+`{other}` is the other subject a finding names, `{message}` the raw message.
+A rule with no `reasons` entry shows its raw message. `answers_kind` is one of
+`signoff`, `links`, `definitions`, `duplicates`, `structure`, `keep-or-cut`,
+`fields`. Each answer carries `answer`, a stable key (hash of verdict,
+operation, also and evidence) that hosted votes are counted by.
 
 ## Storage
 
@@ -211,8 +278,9 @@ editing the owning file and recreating the dev database; after it, only add file
 
 `adapters/onga/` holds ONGA's `workbench.yaml`, its plugin (embeddings
 findings, ENCODE usage, upstream SO requests, facet decomposition, SO
-element-type rules, site-protected names, the proposals route) and its
-`review_types.yaml`. The tests reproduce ONGA's own outputs:
+element-type rules, site-protected names, the proposals route, and the review
+UI hooks: mapping suggestions, browse links, usage and upstream panels, review
+prompts) and its `review_types.yaml` (version 2, with ONGA's wording). The tests reproduce ONGA's own outputs:
 
 ```bash
 # read-only checks (subjects, store, lint) against an ONGA checkout:
@@ -221,5 +289,10 @@ ONGA_ROOT=../onga pytest -q
 git -C ../onga worktree add --detach ~/work/cwb-onga HEAD
 ONGA_ROOT=~/work/cwb-onga ONGA_SCRATCH=~/work/cwb-onga pytest -q
 ```
+
+`tests/test_onga_review_items.py` compares every review item with the ONGA
+site's own `itemsFor()` (run with `npx tsx`); it needs ONGA's uncommitted
+`site/src/lib/review-types.ts` (and the files it imports) copied into the
+worktree, and `site/node_modules` (a symlink to the main checkout's works).
 
 See STATUS.md for what matches and what differs.

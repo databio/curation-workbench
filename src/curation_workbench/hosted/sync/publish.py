@@ -62,7 +62,7 @@ def write_derived(conn, store, resident_id, snapshot_id, bundle, *, new_snapshot
     hosted = store.records()
     decisions = derive.merge_decisions(bundle.get("repo_decisions") or [], hosted)
     st = derive.status(bundle, decisions)
-    rv = derive.review(bundle, st, store.snapshot()["next_id"])
+    rv = derive.review(bundle, st, f"H-{int(store.snapshot()['next_id']):04d}")
     rev = store.decisions_rev()
     values = {"snapshot_id": snapshot_id, "decisions_version": rev, "status": st, "review": rv,
               "computed_at": func.now()}

@@ -24,7 +24,8 @@ def test_bundle_round_trip(toy):
     bundle = snapshot.build(wb)
     assert bundle["format"] == "cwb-snapshot/1"
     assert bundle["schema_fingerprint"] == bundle["subjects"]["schema_fingerprint"]
-    assert bundle["review_types"] is None and bundle["plugins"] == []
+    assert bundle["review_types"]["title"] == "Toy" and bundle["plugins"] == []
+    assert all(bundle[k] == {} for k in snapshot.REVIEW_HOOK_KEYS)  # no plugins, no hook output
     assert set(bundle["signals"]) == {"impact", "adoption", "required"}
     again = json.loads(snapshot.dumps(bundle))
     text, _ = status.render(wb)
@@ -80,3 +81,23 @@ def test_merge_decisions():
             {"id": "DEC-0002", "origin": {"kind": "hosted", "ref": "H-0001"}}]
     hosted = [{"id": "H-0001"}, {"id": "H-0002"}]
     assert [d["id"] for d in derive.merge_decisions(repo, hosted)] == ["DEC-0001", "DEC-0002", "H-0002"]
+
+
+def test_review_hooks_fill_the_bundle(toy):
+    (toy / "uihooks.py").write_text(
+        "def register(wb):\n"
+        "    wb.suggestions.append(lambda wb: {'map:1': {'object': 'ex:X', 'label': 'x', 'source': 'ex',"
+        " 'score': 0.9, 'definition': None}})\n"
+        "    wb.browse_url = lambda wb, s: f'https://site/{s[\"slug\"]}' if s['kind'] == 'term' else None\n"
+        "    wb.subject_panels.append(lambda wb: {'term:TOY_0001': [{'title': 'P', 'text': 't'}]})\n"
+        "    wb.review_prompts.append(lambda wb: {sid: [{'title': 'Q', 'text': str(wb.snapshot_view['signals']"
+        "['adoption'].get(sid, 0))}] for sid in wb.snapshot_view['subjects'] if sid == 'term:TOY_0001'})\n")
+    cfg = toy / "workbench.yaml"
+    cfg.write_text(cfg.read_text() + "plugins: [uihooks]\n")
+    wb = Workbench.open(cfg)
+    bundle = snapshot.build(wb)
+    assert bundle["suggestions"]["map:1"]["object"] == "ex:X"
+    assert set(bundle["browse"]) == {"term:TOY_0001", "term:TOY_0002"}
+    assert bundle["panels"] == {"term:TOY_0001": [{"title": "P", "text": "t"}]}
+    assert bundle["prompts"]["term:TOY_0001"][0]["text"] == "1"
+    assert wb.snapshot_view is None

@@ -18,7 +18,9 @@ Bundle (format `cwb-snapshot/1`):
    policy, verdicts, review_types,          # parsed YAML (review_types may be null)
    options: {iri_prefixes},                 # only the options derive needs
    repo_decisions: [record ...],            # the committed decisions.yaml, read-only
-   suggestions: {}, browse: {}, panels: {}, prompts: {},   # filled by the review UI's hooks
+   suggestions: {finding id: {object, label, source, score, definition}},
+   browse: {sid: url}, panels: {sid: [panel]}, prompts: {sid: [prompt]},
+                                            # the review UI's plugin hooks (review_hooks)
    decision_hooks: bool,                    # plugins registered decision checks
    plugins: [module names], warnings: [str]}
 
@@ -33,7 +35,7 @@ from .store import load_verdicts
 
 FORMAT = "cwb-snapshot/1"
 LINT_FILE = "schema_lint.json"
-#: Keys the review UI plan fills from its plugin hooks; empty until it lands.
+#: Bundle keys filled by the review UI's plugin hooks (`review_hooks`).
 REVIEW_HOOK_KEYS = ("suggestions", "browse", "panels", "prompts")
 
 
@@ -64,6 +66,7 @@ def build(wb):
         elif name in wb.masked_signals:
             masked[name] = wb.masked_signals[name](ctx)
 
+    hooks = review_hooks(wb, doc["subjects"], crosswalk.get("labels") or {}, {**sig, **masked})
     warnings = list(wb.warnings)
     warnings += [f"findings source {s['path']} is from an older schema (stale); it contributes nothing"
                  for s in sources if s.get("stale")]
@@ -84,12 +87,35 @@ def build(wb):
         "review_types": review.load(wb),
         "options": {"iri_prefixes": wb.option("iri_prefixes", {}) or {}},
         "repo_decisions": wb.store.records(),
-        **{k: {} for k in REVIEW_HOOK_KEYS},
+        **hooks,
         "decision_hooks": bool(wb.operation_checks or wb.record_checks or wb.mapping_checks),
         "plugins": [m.__name__ for m in wb.plugins],
         "warnings": warnings,
     }
     return plain(bundle)
+
+
+def review_hooks(wb, subjects_, labels, signals):
+    """The review UI's plugin hooks: suggestions, browse links, subject panels
+    and review prompts, merged across plugins. They see only `wb` and
+    `wb.snapshot_view` (no decisions)."""
+    out = {k: {} for k in REVIEW_HOOK_KEYS}
+    wb.snapshot_view = {"subjects": subjects_, "labels": labels, "signals": signals}
+    try:
+        for fn in wb.suggestions:
+            out["suggestions"].update(fn(wb) or {})
+        if wb.browse_url is not None:
+            for sid, s in subjects_.items():
+                url = wb.browse_url(wb, s)
+                if url:
+                    out["browse"][sid] = url
+        for key, fns in (("panels", wb.subject_panels), ("prompts", wb.review_prompts)):
+            for fn in fns:
+                for sid, rows in (fn(wb) or {}).items():
+                    out[key].setdefault(sid, []).extend(rows)
+    finally:
+        wb.snapshot_view = None
+    return out
 
 
 def files(wb, bundle):

@@ -1,7 +1,8 @@
 # Review tracks and types for ONGA: the queue split by what is being reviewed
 # (track), then by kind of work (type), one question each. Read by
 # `cwb review` (writes review.json) and served by the daemon at
-# /api/review_types. Ported from site/src/lib/review-types.ts.
+# /api/review_types. Ported from site/src/lib/review-types.ts (TRACKS, and
+# the wording of reason() and actionsFor()).
 #
 # A queue item belongs to the track of its subject kind; inside it, to every
 # type whose `rules` match one of its open findings, or to the type with
@@ -9,8 +10,69 @@
 # review page uses for that type's buttons (links, definitions, duplicates,
 # structure, keep-or-cut, fields, signoff); `answers` is the short summary
 # shown on the type's card.
+#
+# Version 2 keys: `title` (display name, also `{project}` in default answer
+# rationales), `reasons` (finding rule -> plain words; see the README),
+# `answers` (per answers_kind settings) and `more_links` (the More menu).
 
-version: 1
+version: 2
+title: ONGA
+
+reasons:
+  no-mapping-at-all:
+    text: Not linked to any outside ontology.
+    hide_if: [unmapped-high-usage]
+  unmapped-high-usage:
+    pattern: 'has (?P<n>\d+) ENCODE files'
+    text: Used by {n:,} ENCODE files, but not linked to any outside ontology.
+    else: Used by many ENCODE files, but not linked to any outside ontology.
+  unreviewed-mapping:
+    pattern: "' (?P<link>\\S+ \\S+) has no mapping"
+    text: "Has a link nobody has checked: {link}."
+    else: "Has a link nobody has checked: {message}."
+  class-no-alignment: {text: Does not point to any outside standard.}
+  coverage-gap: {text: The automatic matcher found nothing similar in other ontologies.}
+  mapping-suggestion: {hide: true}
+  terse-description:
+    pattern: 'is (?P<n>\d+) chars'
+    text: Definition is very short ({n} characters).
+    else: Definition is very short.
+  enum-value-no-description: {text: Has no definition.}
+  todo-marker:
+    pattern: 'comment (?P<note>.*)$'
+    text: "Has a TODO note: {note}"
+    else: "Has a TODO note: {message}"
+  similar-terms:
+    pattern: 'similarity (?P<score>[\d.]+)'
+    text: Reads almost the same as "{other}" (similarity {score}).
+    else: Reads almost the same as "{other}".
+  zero-usage-term: {text: No ENCODE file uses this term.}
+  orphan-facet-value: {text: Nothing else refers to this value.}
+  required-policy: {text: "Marked required, but it is not an identifier. Every required field is extra work for adopters."}
+  slot-no-examples: {text: Has no examples.}
+
+answers:
+  links:
+    # SO uses the element-type predicate (set/element rule, mappings/policy.yaml);
+    # EDAM gets closeMatch; anything else relatedMatch.
+    predicates: {so: "onga:has_element_type", edam: "skos:closeMatch", "*": "skos:relatedMatch"}
+    grades:
+      # An SO link says what each feature in the set is, and needs a fit grade:
+      # one Accept button per grade.
+      so:
+        field: element_type_fit
+        rationale: "{label} {phrase} the kind of feature in this set."
+        options:
+          - {label: Exact fit, value: exact, phrase: is exactly}
+          - {label: Close enough, value: approximate, phrase: is the nearest SO match for}
+          - {label: SO term too broad, value: broad, phrase: is broader than}
+
+more_links:
+  - {label: Merge candidates, url: "https://dev.databio.org/onga/develop/merge-candidates"}
+  - {label: Gaps, url: "https://dev.databio.org/onga/develop/gaps"}
+  - {label: Lint, url: "https://dev.databio.org/onga/develop/lint"}
+  - {label: Proposals, url: "https://dev.databio.org/onga/develop/so-proposals"}
+  - {label: Usage, url: "https://dev.databio.org/onga/develop/frequency"}
 
 tracks:
   - id: vocabulary

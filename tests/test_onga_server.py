@@ -113,3 +113,39 @@ def test_daemon_matches(scratch):
     assert len(a) == len(b)
     for i, (x, y) in enumerate(zip(a, b)):
         assert x == y, (i, x, y)
+
+
+def test_review_ui_routes(scratch, tmp_path):
+    """The review UI's read routes on ONGA: status codes and body keys."""
+    port = 18783
+    wb = Workbench.open(ADAPTER, root=scratch)
+    httpd = ThreadingHTTPServer(("127.0.0.1", port), server.make_handler(wb, "tester", tmp_path / "no-ui"))
+    t = threading.Thread(target=httpd.serve_forever, daemon=True)
+    t.start()
+
+    def get(path):
+        code, body = call(port, "GET", path, origin=None)
+        assert code == 200, (path, body[:300])
+        return json.loads(body)
+    try:
+        assert get("/api/config")["projects"] == [{"slug": "onga", "title": "ONGA"}]
+        rv = get("/api/review")
+        assert rv["version"] == 2 and rv["more_links"] and rv["progress"]["waiting"] == 396
+        page = get("/api/review/vocabulary/links")
+        assert len(page["items"]) == 165 and page["type"]["answers_kind"] == "links"
+        assert any(c["text"].endswith(")") for i in page["items"] for c in i["choices"])
+        idx = get("/api/subject_index")
+        slot = next(s for s, r in idx.items() if r["kind"] == "slot" and r["layer"] == 2 and not r["retired"])
+        sub = get(f"/api/subject?sid={slot}")
+        assert any(p["decide_on"] == "owner_class" for p in sub["prompts"])
+        term = get("/api/subject?sid=term:ONGA_0000001")
+        assert term["browse"].startswith("https://dev.databio.org/onga/")
+        assert any(p["title"] == "Usage" for p in term["panels"])
+        assert set(get("/api/verdicts")["term"]) >= {"keep", "adopt_mapping"}
+        assert get("/api/findings")["findings"]
+        assert get("/api/history")["history"][0]["id"].startswith("DEC-")
+        assert set(get("/api/pending")) == {"decisions", "errors", "files", "ok"}
+        assert call(port, "GET", "/api/review/vocabulary/nope", origin=None)[0] == 404
+    finally:
+        httpd.shutdown()
+        httpd.server_close()

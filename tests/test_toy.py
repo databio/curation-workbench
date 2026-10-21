@@ -41,8 +41,8 @@ def test_regen(toy):
     st = json.loads(toy.cfg.output("status.json").read_text())
     assert st["subjects"]["term:TOY_0001"]["signals"]["adoption"] == 1
     assert "slot:color" in st["queue"]
-    with pytest.raises(review.ReviewTypesError):
-        review.build(toy)  # the toy declares no review types
+    counts = {t["id"]: {ty["id"]: ty["count"] for ty in t["types"]} for t in review.build(toy)["tracks"]}
+    assert counts["schema"]["fields"] == 1   # slot:color, required-policy
 
 
 def record(wb, sid, verdict, op=None, **kw):

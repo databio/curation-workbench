@@ -19,6 +19,15 @@ through a hook registered here by a plugin module's `register(wb)`:
         wb.mapping_fill.append(fn)          # (row, op, negate, table, ctx, new)
         wb.handler_check(kind, verdict, fn)  # (handler, rec, ctx) -> [error]
         wb.routes.append((method, prefix, fn))  # daemon route; fn(api, tail)
+        # review UI hooks, run only at snapshot time; results ride in the bundle
+        wb.suggestions.append(fn)           # (wb) -> {finding id: {object, label, source, score, definition}}
+        wb.browse_url = fn                  # (wb, subject) -> absolute URL | None
+        wb.subject_panels.append(fn)        # (wb) -> {sid: [{title, text?, links?, table?}]}
+        wb.review_prompts.append(fn)        # (wb) -> {sid: [{title, text, source, suggested_verdict,
+                                            #          suggested_operation, decide_on}]}
+
+While the review UI hooks run, `wb.snapshot_view` holds the decision-free
+data they may use: `{subjects, labels, signals}` (signals unmasked).
 
 Plugin modules are imported from `plugin_dir` when the config sets it (only
 that folder is on sys.path while they import, so helpers must be imported at
@@ -67,6 +76,11 @@ class Workbench:
         self.handler_checks = {}
         self.regen = []            # (wb, out_dir) -> None, extra generators run by `cwb regen`
         self.routes = []           # (method, prefix, fn(api, tail)) extra daemon routes
+        self.suggestions = []      # review UI hooks (snapshot time only; see snapshot.py)
+        self.browse_url = None
+        self.subject_panels = []
+        self.review_prompts = []
+        self.snapshot_view = None  # set by snapshot.build while the review UI hooks run
         self.plugins = []
         self.hosted = False
         self.warnings = []         # hosted mode: what was ignored (carried in the snapshot bundle)

@@ -18,6 +18,24 @@ Endpoints
   POST   /api/apply               run `cwb apply` (streams its output)
   GET    /api/apply               the last run's log: {running, dry_run, log, exit}
 
+Read routes for the review UI (bodies built by views.py, the same functions
+the hosted API calls):
+  GET    /api/config              {mode: "local", projects: [{slug, title}], user: {name}}
+  GET    /api/review              review.json (version 2) without items (types keep `sids`)
+  GET    /api/review/<track>/<type>   {track, type, title, decisions_next_id, items}
+  GET    /api/subject_index       {sid: {kind, name, label, slug, hash, container, layer,
+                                         retired, state, score}}
+  GET    /api/subject?sid=<sid>   one subject: record, status, findings, decisions,
+                                  aliases, prompts, panels, browse
+  GET    /api/verdicts            verdicts.yaml as JSON (seed-only verdicts removed)
+  GET    /api/findings            {findings: [... with open]}
+  GET    /api/history             {history: [decision + now, name, kind, layer, slug]}
+  GET    /api/pending             pending decisions + an apply dry run's effects and diff
+
+The review UI (the built SPA, `--ui DIR`, default the packaged
+curation_workbench/web/) is served from the same port: `/assets/*` as
+files, and any other non-API GET that accepts text/html gets index.html.
+
 Plugins add routes with `wb.routes.append((method, prefix, fn))`, where
 fn(api, tail) handles the request (a prefix ending in "/" passes the rest of
 the path as `tail`); `api.workbench` is the Workbench, and `api.json_body()`,
@@ -44,22 +62,26 @@ import contextlib
 import datetime
 import ipaddress
 import json
+import mimetypes
 import socket
 import subprocess
 import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse
+from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 import yaml
 
-from . import derive, snapshot, store
+from . import apply as apply_mod
+from . import derive, review, snapshot, store, views
 from . import status as status_mod
 from . import subjects as subjects_mod
 from .store.yaml_store import LOCK
 
 SERVER_FIELDS = ("id", "decided_by", "decided_on", "schema_fingerprint", "status", "applied", "origin")
 DEFAULT_ORIGINS = [f"http://{h}:{p}" for h in ("localhost", "127.0.0.1") for p in range(4321, 4330)]
+DEFAULT_UI = Path(__file__).resolve().parent / "web"
 
 
 def is_loopback(host):
@@ -70,8 +92,11 @@ def is_loopback(host):
     return bool(infos) and all(ipaddress.ip_address(i[4][0]).is_loopback for i in infos)
 
 
-def make_handler(wb, decided_by):
+def make_handler(wb, decided_by, ui_dir=None):
     cfg = wb.cfg
+    ui = Path(ui_dir).resolve() if ui_dir else None
+    if ui is not None and not (ui / "index.html").is_file():
+        ui = None
     origins = set(wb.option("allowed_origins", DEFAULT_ORIGINS))
 
     def git(*args):
@@ -94,6 +119,21 @@ def make_handler(wb, decided_by):
                 cache["bundle"] = snapshot.build(wb)
                 cache["key"] = key
             return cache["bundle"]
+
+    derived_cache = {"key": None}
+    pending_cache = {"key": None}
+
+    def derived():
+        """(bundle, records, status, review) for the current inputs and store."""
+        b = bundle()
+        key = (id(b), wb.store.token() if cfg.decisions.exists() else None)
+        with cache_lock:
+            if derived_cache["key"] != key:
+                records = wb.store.records()
+                st = derive.status(b, records)
+                rv = derive.review(b, st, review.next_id(wb.store)) if b.get("review_types") else None
+                derived_cache.update(key=key, value=(b, records, st, rv))
+            return derived_cache["value"]
 
     def subjects():
         return store.Subjects(bundle()["subjects"])
@@ -121,12 +161,14 @@ def make_handler(wb, decided_by):
                 self.send_header("Vary", "Origin")
                 self.send_header("Access-Control-Expose-Headers", "X-Store-Mtime")
 
-        def send(self, code, body, ctype="application/json"):
+        def send(self, code, body, ctype="application/json", cache=None):
             data = body if isinstance(body, bytes) else json.dumps(body, indent=1).encode()
             self.send_response(code)
             self._cors()
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(data)))
+            if cache:
+                self.send_header("Cache-Control", cache)
             if cfg.decisions.exists():
                 self.send_header("X-Store-Mtime", wb.store.token())
             self.end_headers()
@@ -152,7 +194,10 @@ def make_handler(wb, decided_by):
                 self.error(403, [f"bad Host {host!r}"])
                 return False
             origin = self.headers.get("Origin")
-            if origin and origin not in origins:
+            # The review UI is served from this port, so its own origin (the
+            # loopback Host it was loaded from) is always allowed: browsers
+            # send Origin on module scripts and on every non-GET fetch.
+            if origin and origin not in origins and origin != f"http://{self.headers.get('Host')}":
                 self.error(403, [f"origin {origin} not allowed"])
                 return False
             return True
@@ -194,7 +239,24 @@ def make_handler(wb, decided_by):
             self.end_headers()
 
         def do_GET(self):
+            path = urlparse(self.path).path
+            if ui is not None and not (path == "/api" or path.startswith("/api/")):
+                if not self._guard():
+                    return
+                return self.static(path)
             self._dispatch([
+                ("/api/config", self.config),
+                ("/api/review/", self.review_type),
+                ("/api/review", self.review_index),
+                ("/api/subject_index", lambda _: self.send(
+                    200, views.subject_index(derived()[0], derived()[2]))),
+                ("/api/subject", self.subject),
+                ("/api/verdicts", lambda _: self.send(200, views.verdicts_view(bundle()["verdicts"]))),
+                ("/api/findings", lambda _: self.send(
+                    200, views.findings_view(derived()[0], derived()[2]))),
+                ("/api/history", lambda _: self.send(
+                    200, views.history(derived()[1], derived()[0]))),
+                ("/api/pending", self.pending),
                 ("/api/health", self.health),
                 ("/api/decisions", lambda _: self.send(200, self._store_json())),
                 ("/api/subjects", lambda _: self.send(
@@ -216,6 +278,66 @@ def make_handler(wb, decided_by):
 
         def do_PATCH(self):
             self._dispatch([])
+
+        # -------------------------------------------------------- review UI
+
+        def static(self, path):
+            """The built SPA: files under /assets/ (and other files at the UI
+            root), else index.html for pages that accept HTML."""
+            rel = path.lstrip("/")
+            target = (ui / rel).resolve() if rel else None
+            inside = target is not None and target.is_relative_to(ui) and target.is_file()
+            if inside:
+                ctype = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
+                return self.send(200, target.read_bytes(), ctype,
+                                 cache="public, max-age=31536000, immutable"
+                                 if rel.startswith("assets/") else "no-cache")
+            if rel.startswith("assets/") or "text/html" not in (self.headers.get("Accept") or ""):
+                return self.error(404, [f"no file {path}"])
+            return self.send(200, (ui / "index.html").read_bytes(), "text/html; charset=utf-8",
+                             cache="no-cache")
+
+        def config(self, _):
+            rt = bundle().get("review_types") or {}
+            self.send(200, {"mode": "local",
+                            "projects": [{"slug": cfg.name, "title": rt.get("title") or cfg.name}],
+                            "user": {"name": decided_by}})
+
+        def review_index(self, _):
+            rv = derived()[3]
+            if rv is None:
+                return self.error(404, [f"{cfg.rel(cfg.review_types)} does not exist"])
+            self.send(200, views.review_index(rv))
+
+        def review_type(self, tail):
+            parts = tail.split("/")
+            page = views.review_type_page(derived()[3], *parts) if len(parts) == 2 else None
+            if page is None:
+                return self.error(404, [f"no review type {tail}"])
+            self.send(200, page)
+
+        def subject(self, _):
+            sid = (parse_qs(urlparse(self.path).query).get("sid") or [""])[0]
+            b, records, st, _rv = derived()
+            body = views.subject_view(b, st, records, sid)
+            if body is None:
+                return self.error(404, [f"unknown subject {sid!r}"])
+            self.send(200, body)
+
+        def pending(self, _):
+            b, records, _st, _rv = derived()
+            key = (id(b), wb.store.token() if cfg.decisions.exists() else None)
+            with LOCK:
+                if pending_cache["key"] != key:
+                    if any(d.get("status") == "pending" for d in records):
+                        emitted = apply_mod.emit(apply_mod.run(wb, dry_run=True))
+                    else:
+                        emitted = {"decisions": [], "errors": {}, "files": []}
+                    effects = {e["id"]: {k: e[k] for k in ("created", "retired", "renamed") if k in e}
+                               for e in emitted["decisions"] if "created" in e}
+                    pending_cache.update(key=key, value=views.pending_view(
+                        records, effects=effects, errors=emitted["errors"], files=emitted["files"]))
+            self.send(200, pending_cache["value"])
 
         # -------------------------------------------------------- handlers
 
@@ -302,7 +424,7 @@ def make_handler(wb, decided_by):
     return Api
 
 
-def serve(wb, host="127.0.0.1", port=8781):
+def serve(wb, host="127.0.0.1", port=8781, ui_dir=None):
     if not is_loopback(host):
         sys.exit(f"refusing to bind {host!r}: the curation daemon listens on loopback only")
     out = subprocess.run(["git", "-C", str(wb.cfg.root), "config", "user.name"],
@@ -311,8 +433,13 @@ def serve(wb, host="127.0.0.1", port=8781):
     if not decided_by:
         sys.exit("git config user.name is empty; the daemon needs it for decided_by")
     ThreadingHTTPServer.address_family = socket.AF_INET6 if ":" in host else socket.AF_INET
-    httpd = ThreadingHTTPServer((host, port), make_handler(wb, decided_by))
+    ui = Path(ui_dir) if ui_dir else DEFAULT_UI
+    httpd = ThreadingHTTPServer((host, port), make_handler(wb, decided_by, ui))
     print(f"curation daemon for {wb.cfg.name} on http://{host}:{port} (decided_by={decided_by})", flush=True)
+    if (ui / "index.html").is_file():
+        print(f"review UI: http://{host}:{port}/", flush=True)
+    else:
+        print("UI not built: npm --prefix frontend run build", flush=True)
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

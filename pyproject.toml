@@ -21,6 +21,9 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/curation_workbench"]
+# The built review UI (`npm --prefix frontend run build`) is gitignored but
+# shipped as package data, so `cwb serve` needs no Node at run time.
+artifacts = ["src/curation_workbench/web/"]
 
 [tool.pytest.ini_options]
 markers = [

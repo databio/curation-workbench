@@ -13,9 +13,9 @@ decision change in milliseconds.
 """
 from collections import defaultdict
 
+from . import answers
 from .review import GENERATED_BY as REVIEW_GENERATED_BY
 from .review import dump as dump_review  # noqa: F401  (re-exported)
-from .review import to_curie
 from .status import GENERATED_BY as STATUS_GENERATED_BY
 from .status import QUEUE_STATES, STATES, resolve
 from .status import dump as dump_status  # noqa: F401  (re-exported)
@@ -159,49 +159,37 @@ def status(bundle, decisions):
 
 
 def review(bundle, status, decisions_next_id=None):
-    """review.json data: the queue sorted into review tracks and types, or None
-    when the bundle has no review types. `decisions_next_id` is reserved for
-    the review UI's answer builder (review.json version 2)."""
+    """review.json data (version 2, see review.py): the queue sorted into
+    review tracks and types with every item's answers built (answers.py), or
+    None when the bundle has no review types. `decisions_next_id` is the id the
+    decision store mints next (`DEC-0160` locally, `H-0012` hosted; an int
+    means a local `DEC-` number); the UI treats records with the same prefix
+    and a number at or above it as made since this list was built."""
     data = bundle.get("review_types")
     if data is None:
         return None
-    subjects = bundle["subjects"]["subjects"]
-    findings = {f["id"]: f for f in bundle["findings"]}
-    prefixes = (bundle.get("options") or {}).get("iri_prefixes") or {}
-
-    def open_findings(sid):
-        objs = {r.get("object") for r in subjects[sid]["payload"].get("sssom") or []} \
-            if subjects[sid]["kind"] == "term" else set()
-        out = []
-        for fid in status["subjects"][sid]["open_findings"]:
-            f = findings.get(fid)
-            if f is None:
-                continue
-            if f.get("object") and to_curie(f["object"], prefixes) in objs:
-                continue
-            out.append(f)
-        return out
-
+    if isinstance(decisions_next_id, int):
+        decisions_next_id = f"DEC-{decisions_next_id:04d}"
+    sorted_ = answers.sort(bundle, status)
+    ctx = answers.Ctx(bundle)
     tracks = []
     for t in data["tracks"]:
-        types = [{**{k: v for k, v in ty.items() if k not in ("rules", "fallback")},
-                  "count": 0, "items": []} for ty in t["types"]]
-        total = 0
-        for sid in status["queue"]:
-            if subjects[sid]["kind"] not in t["kinds"]:
-                continue
-            total += 1
-            found = open_findings(sid)
-            rules = {f["rule"] for f in found}
-            hits = [i for i, ty in enumerate(t["types"]) if set(ty.get("rules") or []) & rules]
-            if not hits:
-                hits = [i for i, ty in enumerate(t["types"]) if ty.get("fallback")]
-            for i in hits:
-                mine = [f["id"] for f in found if f["rule"] in (t["types"][i].get("rules") or [])]
-                types[i]["items"].append({"sid": sid, "findings": mine})
-                types[i]["count"] += 1
-        tracks.append({**{k: v for k, v in t.items() if k != "types"}, "total": total, "types": types})
-    return {"_generated_by": REVIEW_GENERATED_BY, "schema_fingerprint": status["schema_fingerprint"],
+        rows = sorted_[t["id"]]["types"]
+        types = []
+        for ty in t["types"]:
+            items = [answers.item(sid, found, ty, bundle, status, ctx) for sid, found in rows[ty["id"]]]
+            types.append({**{k: v for k, v in ty.items() if k not in ("rules", "fallback")},
+                          "count": len(items), "items": items})
+        tracks.append({**{k: v for k, v in t.items() if k != "types"},
+                       "total": sorted_[t["id"]]["total"], "types": types})
+    overall = (status.get("rollups") or {}).get("overall") or {}
+    return {"_generated_by": REVIEW_GENERATED_BY, "version": 2,
+            "title": data.get("title") or bundle.get("project"),
+            "schema_fingerprint": status["schema_fingerprint"],
+            "decisions_next_id": decisions_next_id,
+            "progress": {"waiting": len(status["queue"]),
+                         "percent_settled": overall.get("percent_settled", 0.0)},
+            "more_links": list(data.get("more_links") or []),
             "tracks": tracks}
 
 

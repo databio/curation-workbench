@@ -1,0 +1,997 @@
+/* ==========================================================================
+   snapgate.css -- the auth components' own stylesheet.
+
+   Ships with the package. A host application's ONLY integration step is to
+   import this file once, e.g. from src/styles/main.css:
+
+       @import '../snapgate/snapgate.css';
+
+   Everything the components need is here. Nothing is borrowed from the host:
+   no utility classes, no shared button/card component, no design tokens. All
+   selectors are prefixed `sg-` so they cannot collide with anything the host
+   defines.
+
+   THEMING
+   Every value reads a `--sg-*` custom property with a built-in fallback, so
+   the components look right in a bare app and pick up the host's palette when
+   it defines those properties (typically in its own tokens file). The full,
+   authoritative list of overridable properties is the block below -- see
+   USAGE.md for a worked example.
+
+   Lengths are expressed in `em` on purpose: the components scale with the host
+   font size instead of imposing one.
+   ========================================================================== */
+
+.sg-account-switcher,
+.sg-user-menu,
+.sg-remembered,
+.sg-pending,
+.sg-loading,
+.sg-overlay,
+.sg-menu,
+.sg-button,
+.sg-link,
+.sg-connections,
+.sg-role-badge,
+.sg-admin,
+.sg-role-request,
+.sg-tabs,
+.sg-field {
+  /* --- palette --------------------------------------------------------- */
+  --sg--text: var(--sg-color-text, rgb(17 24 39));
+  --sg--muted: var(--sg-color-muted, rgb(107 114 128));
+  --sg--muted-strong: var(--sg-color-muted-strong, rgb(75 85 99));
+  --sg--faint: var(--sg-color-faint, rgb(156 163 175));
+  --sg--surface: var(--sg-color-surface, rgb(255 255 255));
+  --sg--surface-alt: var(--sg-color-surface-alt, rgb(249 250 251));
+  --sg--hover: var(--sg-color-hover, rgb(243 244 246));
+  --sg--border: var(--sg-color-border, rgb(229 231 235));
+  --sg--avatar-bg: var(--sg-color-avatar-bg, rgb(209 213 219));
+  --sg--primary: var(--sg-color-primary, rgb(37 99 235));
+  --sg--on-primary: var(--sg-color-on-primary, rgb(255 255 255));
+  --sg--warning: var(--sg-color-warning, rgb(202 138 4));
+  --sg--success: var(--sg-color-success, rgb(22 163 74));
+  --sg--danger: var(--sg-color-danger, rgb(220 38 38));
+  --sg--admin: var(--sg-color-admin, rgb(124 58 237));
+
+  /* --- geometry -------------------------------------------------------- */
+  --sg--radius: var(--sg-radius, 0.5em);
+  --sg--radius-sm: var(--sg-radius-sm, 0.375em);
+  --sg--border-width: var(--sg-border-width, thin);
+  --sg--shadow: var(
+    --sg-shadow,
+    0 0.625em 1em -0.1875em rgb(0 0 0 / 0.12),
+    0 0.25em 0.375em -0.125em rgb(0 0 0 / 0.06)
+  );
+  --sg--menu-width: var(--sg-menu-width, 18em);
+  --sg--admin-width: var(--sg-admin-width, 64em);
+
+  /* --- rhythm ---------------------------------------------------------- */
+  --sg--space-1: var(--sg-space-1, 0.25em);
+  --sg--space-2: var(--sg-space-2, 0.5em);
+  --sg--space-3: var(--sg-space-3, 0.75em);
+  --sg--space-4: var(--sg-space-4, 1em);
+  --sg--space-6: var(--sg-space-6, 1.5em);
+  --sg--space-8: var(--sg-space-8, 2em);
+
+  /* --- type ------------------------------------------------------------ */
+  --sg--font: var(--sg-font-family, inherit);
+  --sg--font-size-xs: var(--sg-font-size-xs, 0.75em);
+  --sg--font-size-sm: var(--sg-font-size-sm, 0.875em);
+  --sg--font-size-lg: var(--sg-font-size-lg, 1.125em);
+  --sg--font-size-2xl: var(--sg-font-size-2xl, 1.5em);
+  --sg--weight-medium: var(--sg-font-weight-medium, 500);
+  --sg--weight-bold: var(--sg-font-weight-bold, 700);
+
+  /* --- layering and motion --------------------------------------------- */
+  --sg--z-overlay: var(--sg-z-overlay, 1000);
+  --sg--z-menu: var(--sg-z-menu, 1001);
+  --sg--transition: var(--sg-transition, 120ms ease);
+}
+
+/* --------------------------------------------------------------- avatars */
+
+.sg-avatar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2em;
+  height: 2em;
+  border-radius: 50%;
+  object-fit: cover;
+  background: var(--sg--avatar-bg);
+  color: var(--sg--muted-strong);
+  font-size: var(--sg--font-size-sm);
+  font-weight: var(--sg--weight-medium);
+  line-height: 1;
+}
+
+.sg-avatar--lg {
+  width: 2.5em;
+  height: 2.5em;
+  font-size: inherit;
+}
+
+/* ------------------------------------------------------- identity blocks */
+
+.sg-identity {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: left;
+}
+
+.sg-identity__name {
+  margin: 0;
+  overflow: hidden;
+  color: var(--sg--text);
+  font-weight: var(--sg--weight-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sg-identity__email {
+  margin: 0;
+  overflow: hidden;
+  color: var(--sg--muted);
+  font-size: var(--sg--font-size-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* -------------------------------------------------------------- buttons */
+
+.sg-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sg--space-2);
+  padding: var(--sg--space-2) var(--sg--space-4);
+  border: var(--sg--border-width) solid transparent;
+  border-radius: var(--sg--radius);
+  background: var(--sg--primary);
+  color: var(--sg--on-primary);
+  font: inherit;
+  font-family: var(--sg--font);
+  font-weight: var(--sg--weight-medium);
+  line-height: 1.4;
+  cursor: pointer;
+  transition: background-color var(--sg--transition), color var(--sg--transition);
+}
+
+.sg-button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--sg--primary) 88%, black);
+}
+
+.sg-button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.sg-button--secondary {
+  border-color: var(--sg--border);
+  background: var(--sg--surface);
+  color: var(--sg--text);
+}
+
+.sg-button--secondary:hover:not(:disabled) {
+  background: var(--sg--hover);
+}
+
+.sg-button--block {
+  display: flex;
+  width: 100%;
+}
+
+.sg-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--sg--muted-strong);
+  font: inherit;
+  font-family: var(--sg--font);
+  font-size: var(--sg--font-size-sm);
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+  cursor: pointer;
+  transition: color var(--sg--transition);
+}
+
+.sg-link:hover:not(:disabled) {
+  color: var(--sg--text);
+}
+
+.sg-link:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* Keyboard focus is visible on every interactive element the package owns. */
+.sg-button:focus-visible,
+.sg-link:focus-visible,
+.sg-trigger:focus-visible,
+.sg-menu__item:focus-visible,
+.sg-remembered__pick:focus-visible,
+.sg-remembered__forget:focus-visible,
+.sg-connections__group input:focus-visible,
+.sg-tabs__tab:focus-visible,
+.sg-field__input:focus-visible,
+.sg-admin__search:focus-visible,
+.sg-admin__filter:focus-visible,
+.sg-role-badge__item--link:focus-visible {
+  outline: var(--sg-focus-width, 0.125em) solid var(--sg--primary);
+  outline-offset: var(--sg-focus-offset, 0.125em);
+}
+
+/* ------------------------------------------------ trigger + dropdown menu */
+
+.sg-account-switcher,
+.sg-user-menu {
+  position: relative;
+  display: inline-block;
+  font-family: var(--sg--font);
+}
+
+.sg-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sg--space-2);
+  max-width: 100%;
+  padding: var(--sg--space-2);
+  border: 0;
+  border-radius: var(--sg--radius);
+  background: none;
+  color: var(--sg--text);
+  font: inherit;
+  cursor: pointer;
+  transition: background-color var(--sg--transition);
+}
+
+.sg-trigger:hover {
+  background: var(--sg--hover);
+}
+
+.sg-trigger__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sg-trigger__caret {
+  color: var(--sg--faint);
+  font-size: var(--sg--font-size-xs);
+  line-height: 1;
+}
+
+.sg-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: var(--sg--z-overlay);
+}
+
+.sg-menu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  z-index: var(--sg--z-menu);
+  width: var(--sg--menu-width);
+  max-width: 90vw;
+  margin-top: var(--sg--space-2);
+  border: var(--sg--border-width) solid var(--sg--border);
+  border-radius: var(--sg--radius);
+  background: var(--sg--surface);
+  box-shadow: var(--sg--shadow);
+  color: var(--sg--text);
+  text-align: left;
+}
+
+.sg-menu__header {
+  padding: var(--sg--space-3);
+  border-bottom: var(--sg--border-width) solid var(--sg--border);
+  background: var(--sg--surface-alt);
+  border-top-left-radius: var(--sg--radius);
+  border-top-right-radius: var(--sg--radius);
+}
+
+.sg-menu__label {
+  margin: 0;
+  color: var(--sg--muted);
+  font-size: var(--sg--font-size-xs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.sg-menu__section {
+  padding: var(--sg--space-2);
+}
+
+.sg-menu__section + .sg-menu__section {
+  border-top: var(--sg--border-width) solid var(--sg--border);
+}
+
+.sg-menu__section-label {
+  margin: 0;
+  padding: var(--sg--space-2) var(--sg--space-3);
+  color: var(--sg--muted);
+  font-size: var(--sg--font-size-xs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.sg-menu__item {
+  display: flex;
+  align-items: center;
+  gap: var(--sg--space-3);
+  width: 100%;
+  padding: var(--sg--space-2) var(--sg--space-3);
+  border: 0;
+  border-radius: var(--sg--radius-sm);
+  background: none;
+  color: var(--sg--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--sg--transition);
+}
+
+.sg-menu__item:hover {
+  background: var(--sg--hover);
+}
+
+.sg-menu__item--muted {
+  color: var(--sg--muted-strong);
+}
+
+.sg-menu__status {
+  margin: var(--sg--space-2) 0 0;
+  color: var(--sg--warning);
+  font-size: var(--sg--font-size-sm);
+}
+
+/* -------------------------------------------------- remembered accounts */
+
+.sg-remembered {
+  font-family: var(--sg--font);
+  color: var(--sg--text);
+}
+
+.sg-remembered__title {
+  margin: 0 0 var(--sg--space-4);
+  font-size: var(--sg--font-size-lg);
+  font-weight: var(--sg--weight-medium);
+}
+
+.sg-remembered__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sg--space-2);
+  margin-bottom: var(--sg--space-4);
+}
+
+.sg-remembered__item {
+  display: flex;
+  align-items: center;
+  gap: var(--sg--space-3);
+  padding: var(--sg--space-3);
+  border: var(--sg--border-width) solid var(--sg--border);
+  border-radius: var(--sg--radius);
+  transition: background-color var(--sg--transition);
+}
+
+.sg-remembered__item:hover {
+  background: var(--sg--surface-alt);
+}
+
+.sg-remembered__pick {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: var(--sg--space-3);
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sg-remembered__pick:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/*
+ * The "forget this account" control is quiet until the row is engaged. It
+ * stays in the layout and stays focusable, so keyboard users reach it by
+ * tabbing -- :focus-within covers arriving from the row, :focus-visible the
+ * button itself.
+ */
+.sg-remembered__forget {
+  flex: none;
+  padding: var(--sg--space-1);
+  border: 0;
+  border-radius: var(--sg--radius-sm);
+  background: none;
+  color: var(--sg--faint);
+  font: inherit;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--sg--transition), color var(--sg--transition);
+}
+
+.sg-remembered__item:hover .sg-remembered__forget,
+.sg-remembered__item:focus-within .sg-remembered__forget,
+.sg-remembered__forget:focus-visible,
+.sg-connections__group input:focus-visible {
+  opacity: 1;
+}
+
+.sg-remembered__forget:hover {
+  color: var(--sg--muted-strong);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sg-button,
+  .sg-link,
+  .sg-trigger,
+  .sg-menu__item,
+  .sg-remembered__item,
+  .sg-remembered__forget,
+  .sg-tabs__tab,
+  .sg-role-badge__item--link {
+    transition: none;
+  }
+}
+
+/* --------------------------------------------------------- pending gate */
+
+.sg-pending {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: var(--sg--space-6);
+  font-family: var(--sg--font);
+  color: var(--sg--text);
+}
+
+.sg-pending__card {
+  width: 100%;
+  max-width: var(--sg-card-width, 28em);
+  padding: var(--sg--space-8);
+  border: var(--sg--border-width) solid var(--sg--border);
+  border-radius: var(--sg--radius);
+  background: var(--sg--surface);
+  box-shadow: var(--sg--shadow);
+  text-align: center;
+}
+
+.sg-pending__icon {
+  display: block;
+  width: 4em;
+  height: 4em;
+  margin: 0 auto var(--sg--space-6);
+  color: var(--sg--warning);
+}
+
+.sg-pending__title {
+  margin: 0 0 var(--sg--space-4);
+  font-size: var(--sg--font-size-2xl);
+  font-weight: var(--sg--weight-bold);
+}
+
+.sg-pending__text {
+  margin: 0 0 var(--sg--space-6);
+  color: var(--sg--muted-strong);
+}
+
+.sg-pending__actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sg--space-3);
+}
+
+.sg-pending__note {
+  margin-top: var(--sg--space-6);
+  padding: var(--sg--space-4);
+  border-radius: var(--sg--radius-sm);
+  background: var(--sg--surface-alt);
+  color: var(--sg--muted-strong);
+  font-size: var(--sg--font-size-sm);
+}
+
+.sg-pending__note p {
+  margin: 0;
+}
+
+/* -------------------------------------------------------- loading state */
+
+.sg-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  font-family: var(--sg--font);
+  color: var(--sg--muted-strong);
+  text-align: center;
+}
+
+.sg-loading p {
+  margin: 0;
+}
+
+/* ------------------------------------------------------- connected apps */
+
+.sg-connections {
+  font-family: var(--sg--font);
+  color: var(--sg--text);
+}
+
+.sg-connections__title {
+  margin: 0 0 var(--sg--space-3);
+  font-size: var(--sg--font-size-lg);
+  font-weight: var(--sg--weight-bold);
+}
+
+.sg-connections__empty {
+  margin: 0;
+  color: var(--sg--muted);
+}
+
+.sg-connections__error {
+  margin: 0 0 var(--sg--space-3);
+  padding: var(--sg--space-2) var(--sg--space-3);
+  border-left: 0.25em solid var(--sg--warning);
+  border-radius: var(--sg--radius-sm);
+  background: var(--sg--surface-alt);
+  font-size: var(--sg--font-size-sm);
+}
+
+.sg-connections__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sg--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sg-connections__item {
+  padding: var(--sg--space-4);
+  border: var(--sg--border-width) solid var(--sg--border);
+  border-radius: var(--sg--radius);
+  background: var(--sg--surface);
+}
+
+.sg-connections__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--sg--space-2);
+}
+
+.sg-connections__name {
+  font-weight: var(--sg--weight-medium);
+}
+
+.sg-connections__host,
+.sg-connections__dates {
+  color: var(--sg--muted);
+  font-size: var(--sg--font-size-sm);
+}
+
+.sg-connections__groups {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sg--space-2) var(--sg--space-4);
+  margin: var(--sg--space-3) 0 0;
+  padding: 0;
+  border: 0;
+}
+
+.sg-connections__legend {
+  margin-bottom: var(--sg--space-1);
+  padding: 0;
+  color: var(--sg--muted-strong);
+  font-size: var(--sg--font-size-sm);
+}
+
+.sg-connections__group {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sg--space-1);
+  cursor: pointer;
+}
+
+.sg-connections__scopes {
+  margin: var(--sg--space-2) 0 0;
+  padding-left: var(--sg--space-6);
+  color: var(--sg--muted-strong);
+  font-size: var(--sg--font-size-sm);
+}
+
+.sg-connections__dates {
+  margin: var(--sg--space-2) 0 0;
+}
+
+.sg-connections__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sg--space-2);
+  margin-top: var(--sg--space-3);
+}
+
+.sg-connections__confirm {
+  font-size: var(--sg--font-size-sm);
+}
+
+/* ------------------------------------------------------------ user admin */
+
+/* Role chips: the site role, app roles, pending applications. */
+.sg-role-badge {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sg--space-1);
+  margin-top: var(--sg--space-1);
+  font-family: var(--sg--font);
+  vertical-align: middle;
+}
+
+.sg-role-badge--compact {
+  margin-top: 0;
+}
+
+.sg-role-badge__item {
+  --sg--chip: var(--sg--muted-strong);
+  display: inline-block;
+  padding: 0.1em var(--sg--space-2);
+  border: var(--sg--border-width) solid color-mix(in srgb, var(--sg--chip) 35%, var(--sg--surface));
+  border-radius: 1em;
+  background: color-mix(in srgb, var(--sg--chip) 12%, var(--sg--surface));
+  color: color-mix(in srgb, var(--sg--chip) 85%, var(--sg--text));
+  font-size: var(--sg--font-size-xs);
+  font-weight: var(--sg--weight-medium);
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.sg-role-badge--compact .sg-role-badge__item {
+  padding: 0 var(--sg--space-1);
+}
+
+.sg-role-badge__item--neutral { --sg--chip: var(--sg--muted-strong); }
+.sg-role-badge__item--admin { --sg--chip: var(--sg--admin); }
+.sg-role-badge__item--pending { --sg--chip: var(--sg--warning); }
+.sg-role-badge__item--success { --sg--chip: var(--sg--success); }
+
+.sg-role-badge__item--link {
+  text-decoration: none;
+  cursor: pointer;
+  transition: background-color var(--sg--transition);
+}
+
+.sg-role-badge__item--link:hover {
+  background: color-mix(in srgb, var(--sg--chip) 22%, var(--sg--surface));
+}
+
+/* Admin pages. */
+.sg-admin {
+  max-width: var(--sg--admin-width);
+  font-family: var(--sg--font);
+  color: var(--sg--text);
+}
+
+.sg-admin__header {
+  margin-bottom: var(--sg--space-3);
+}
+
+.sg-admin__header p {
+  margin: var(--sg--space-1) 0 0;
+}
+
+.sg-admin__title {
+  margin: 0;
+  font-size: var(--sg--font-size-lg);
+  font-weight: var(--sg--weight-bold);
+}
+
+.sg-admin__toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sg--space-2) var(--sg--space-3);
+  margin-bottom: var(--sg--space-3);
+}
+
+.sg-admin__search,
+.sg-admin__filter,
+.sg-field__input {
+  padding: var(--sg--space-1) var(--sg--space-2);
+  border: var(--sg--border-width) solid var(--sg--border);
+  border-radius: var(--sg--radius-sm);
+  background: var(--sg--surface);
+  color: var(--sg--text);
+  font: inherit;
+}
+
+.sg-admin__search {
+  flex: 1 1 14em;
+  min-width: 0;
+}
+
+.sg-admin__count {
+  color: var(--sg--muted);
+  font-size: var(--sg--font-size-sm);
+}
+
+.sg-admin__error,
+.sg-role-request__error {
+  margin: var(--sg--space-2) 0;
+  padding: var(--sg--space-2) var(--sg--space-3);
+  border-left: 0.25em solid var(--sg--danger);
+  border-radius: var(--sg--radius-sm);
+  background: var(--sg--surface-alt);
+  font-size: var(--sg--font-size-sm);
+}
+
+.sg-admin__empty {
+  margin: 0;
+  color: var(--sg--muted);
+}
+
+.sg-admin__pager {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sg--space-3);
+  margin-top: var(--sg--space-3);
+}
+
+.sg-admin__detail {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.sg-admin__back {
+  align-self: flex-start;
+  margin-bottom: var(--sg--space-3);
+}
+
+.sg-admin__section {
+  margin-top: var(--sg--space-6);
+}
+
+.sg-admin__section-title {
+  margin: 0 0 var(--sg--space-2);
+  font-size: inherit;
+  font-weight: var(--sg--weight-bold);
+}
+
+.sg-admin__person {
+  display: flex;
+  align-items: center;
+  gap: var(--sg--space-2);
+  min-width: 0;
+}
+
+.sg-admin__name {
+  font-size: inherit;
+  font-weight: var(--sg--weight-medium);
+  text-align: left;
+}
+
+.sg-admin__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sg--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sg-admin-table-wrap {
+  overflow-x: auto;
+}
+
+.sg-admin-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--sg--font-size-sm);
+}
+
+.sg-admin-table th,
+.sg-admin-table td {
+  padding: var(--sg--space-2);
+  border-bottom: var(--sg--border-width) solid var(--sg--border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.sg-admin-table th {
+  color: var(--sg--muted-strong);
+  font-weight: var(--sg--weight-medium);
+  white-space: nowrap;
+}
+
+.sg-admin-table__cell--muted {
+  color: var(--sg--muted);
+}
+
+/* Status pills. */
+.sg-status {
+  --sg--pill: var(--sg--muted-strong);
+  display: inline-block;
+  margin-right: var(--sg--space-1);
+  padding: 0.1em var(--sg--space-2);
+  border-radius: 1em;
+  background: color-mix(in srgb, var(--sg--pill) 14%, var(--sg--surface));
+  color: color-mix(in srgb, var(--sg--pill) 85%, var(--sg--text));
+  font-size: var(--sg--font-size-xs);
+  font-weight: var(--sg--weight-medium);
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.sg-status--pending { --sg--pill: var(--sg--warning); }
+.sg-status--approved,
+.sg-status--allowed { --sg--pill: var(--sg--success); }
+.sg-status--suspended,
+.sg-status--refused,
+.sg-status--rejected { --sg--pill: var(--sg--danger); }
+.sg-status--denied,
+.sg-status--withdrawn { --sg--pill: var(--sg--muted-strong); }
+
+/* Row actions and the inline suspend-reason panel. */
+.sg-admin-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--sg--space-2);
+}
+
+.sg-admin-action-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sg--space-2);
+  width: 100%;
+  min-width: 14em;
+  padding: var(--sg--space-3);
+  border: var(--sg--border-width) solid var(--sg--border);
+  border-radius: var(--sg--radius);
+  background: var(--sg--surface-alt);
+}
+
+.sg-admin-action-panel__buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sg--space-2);
+}
+
+/* Role application cards. */
+.sg-admin-card {
+  padding: var(--sg--space-4);
+  border: var(--sg--border-width) solid var(--sg--border);
+  border-radius: var(--sg--radius);
+  background: var(--sg--surface);
+}
+
+.sg-admin-card__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--sg--space-2) var(--sg--space-3);
+}
+
+.sg-admin-card__message {
+  margin: var(--sg--space-2) 0 0;
+  white-space: pre-wrap;
+}
+
+.sg-admin-card__details {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: var(--sg--space-1) var(--sg--space-3);
+  margin: var(--sg--space-3) 0 0;
+  font-size: var(--sg--font-size-sm);
+}
+
+.sg-admin-card__details dt {
+  color: var(--sg--muted-strong);
+}
+
+.sg-admin-card__details dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.sg-admin-card__actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sg--space-2);
+  margin-top: var(--sg--space-3);
+}
+
+.sg-admin-card__note {
+  max-width: 32em;
+}
+
+/* Tabs (status tabs, admin sub-navigation). */
+.sg-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sg--space-1);
+  border-bottom: var(--sg--border-width) solid var(--sg--border);
+  font-family: var(--sg--font);
+}
+
+.sg-tabs__tab {
+  margin-bottom: calc(-1 * var(--sg--border-width));
+  padding: var(--sg--space-2) var(--sg--space-3);
+  border: 0;
+  border-bottom: 0.15em solid transparent;
+  background: none;
+  color: var(--sg--muted-strong);
+  font: inherit;
+  text-decoration: none;
+  cursor: pointer;
+  transition: color var(--sg--transition), border-color var(--sg--transition);
+}
+
+.sg-tabs__tab:hover {
+  color: var(--sg--text);
+}
+
+.sg-tabs__tab--active {
+  border-bottom-color: var(--sg--primary);
+  color: var(--sg--text);
+  font-weight: var(--sg--weight-medium);
+}
+
+/* Form fields (optional; RoleRequestForm uses them, app fields may too). */
+.sg-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sg--space-1);
+}
+
+.sg-field__label {
+  color: var(--sg--muted-strong);
+  font-size: var(--sg--font-size-sm);
+  font-weight: var(--sg--weight-medium);
+}
+
+.sg-field__hint {
+  color: var(--sg--muted);
+  font-size: var(--sg--font-size-xs);
+}
+
+.sg-field__error {
+  color: var(--sg--danger);
+  font-size: var(--sg--font-size-sm);
+}
+
+/* Role application form. */
+.sg-role-request {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sg--space-4);
+  max-width: 36em;
+  font-family: var(--sg--font);
+  color: var(--sg--text);
+}
+
+.sg-role-request__message textarea {
+  resize: vertical;
+}
+
+.sg-role-request__actions {
+  display: flex;
+  gap: var(--sg--space-2);
+}

@@ -1,0 +1,41 @@
+{
+  "name": "@curation-workbench/frontend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "npm run lint:styles && tsc -b && vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "preview": "vite preview",
+    "lint:styles": "node scripts/web-style-guard.mjs"
+  },
+  "dependencies": {
+    "react": "^19",
+    "react-dom": "^19",
+    "react-router": "^7"
+  },
+  "devDependencies": {
+    "@testing-library/dom": "^10.4.2",
+    "@testing-library/jest-dom": "^6",
+    "@testing-library/react": "^16",
+    "@testing-library/user-event": "^14",
+    "@types/node": "^26.6.3",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "@vitejs/plugin-react": "^6",
+    "jsdom": "^25",
+    "typescript": "~5.9",
+    "vite": "^8",
+    "vitest": "^4"
+  },
+  "webStyleGuard": {
+    "exclude": [
+      "src/snapgate/"
+    ],
+    "ignoreClasses": [
+      "neutral"
+    ]
+  }
+}

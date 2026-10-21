@@ -8,7 +8,7 @@
     cwb -c workbench.yaml snapshot [--out F]     the commit-phase bundle as JSON (stdout or F)
     cwb derive --snapshot F --decisions D [--out DIR]   status.json + review.json from a bundle
     cwb -c workbench.yaml apply [--dry-run] [--ids DEC-0001 ...]
-    cwb -c workbench.yaml serve [--port 8781]    local decision daemon
+    cwb -c workbench.yaml serve [--port 8781] [--ui DIR]  local decision daemon + review UI
 
     cwb db migrate                               apply pending database migrations
     cwb db status                                pending / unknown migrations, missing schema
@@ -109,7 +109,7 @@ def cmd_regen(wb, args):
     r = _write({wb.cfg.output("status.json"): status.dump(st)}, args.check, "status")
     print(status.summary(st) + (up if args.check and not r else ""))
     rc |= r
-    rv = derive.review(bundle, st, wb.store.snapshot().get("next_id"))
+    rv = derive.review(bundle, st, review.next_id(wb.store))
     if rv is None:
         print("review: no review_types.yaml; skipped")
     else:
@@ -187,7 +187,7 @@ def cmd_apply(wb, args):
 
 def cmd_serve(wb, args):
     from . import server
-    server.serve(wb, host=args.host, port=args.port)
+    server.serve(wb, host=args.host, port=args.port, ui_dir=args.ui)
     return 0
 
 
@@ -304,6 +304,7 @@ def main(argv=None):
     p = sub.add_parser("serve")
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8781)
+    p.add_argument("--ui", help="built review UI folder (default: the packaged curation_workbench/web)")
     p.set_defaults(fn=cmd_serve)
     p = sub.add_parser("snapshot", help="write the commit-phase bundle as JSON")
     p.add_argument("--out", dest="file", help="write the bundle here instead of stdout")

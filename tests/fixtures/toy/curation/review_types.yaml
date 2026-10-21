@@ -1,0 +1,28 @@
+# Review types for the toy project: no reasons (raw finding messages), no
+# plugins, generic answers only.
+version: 2
+title: Toy
+tracks:
+  - id: vocabulary
+    title: Vocabulary
+    blurb: The terms and the enums that hold them.
+    kinds: [term, enum]
+    types:
+      - {id: links, title: Links, question: "Is this link right?", answers: Confirm · Remove,
+         help: Links nobody checked., rules: [unreviewed-mapping, no-mapping-at-all], answers_kind: links}
+      - {id: definitions, title: Definitions, question: "Is this definition clear?", answers: Fine · Rewrite,
+         help: Missing or short definitions., rules: [enum-value-no-description, terse-description],
+         answers_kind: definitions}
+      - {id: keep-or-cut, title: Keep or cut, question: "Should this term exist?", answers: Keep · Delete,
+         help: Unused terms., rules: [zero-usage-term], answers_kind: keep-or-cut}
+      - {id: signoff, title: Sign-off, question: "Is this right as it is?", answers: Looks right,
+         help: Nothing flagged., fallback: true, answers_kind: signoff}
+  - id: schema
+    title: Schema
+    blurb: Classes, fields and modules.
+    kinds: [class, slot, module, subset, usage]
+    types:
+      - {id: fields, title: Required, question: "Should this field be required?", answers: Required · Optional,
+         help: Required fields cost adopters., rules: [required-policy], answers_kind: fields}
+      - {id: signoff, title: Sign-off, question: "Is this right as it is?", answers: Looks right,
+         help: Nothing flagged., fallback: true, answers_kind: signoff}

@@ -1,0 +1,226 @@
+/* =============================================================================
+   FORM STYLES
+   Compact, label-beside-input forms for the web design system.
+   Frozen: installed by web-style-sync.mjs, hash-checked by the guard.
+   Import it in main.css after utilities.css. Tune it with tokens, never edits:
+
+     --form-label-width   width of the label column       (default 9rem)
+     --form-row-gap       vertical space between rows     (default --space-2)
+     --form-col-gap       label-to-input space            (default --space-3)
+     --form-input-max     cap on a full-width text input  (default 36rem)
+     --form-w-xs/sm/md/lg widths for short inputs         (4ch / 10ch / 11rem / 20rem)
+
+   Rows stack (label above input) only when the FORM itself is narrower than
+   36rem -- a container query, so a form in a small modal or sidebar stacks
+   even on a wide screen.
+   ============================================================================= */
+
+.form {
+  container-type: inline-size;
+  display: flex;
+  flex-direction: column;
+  gap: var(--form-row-gap, var(--space-2, 0.5rem));
+  font-size: var(--font-size-sm, 0.875rem);
+  line-height: 1.5;
+}
+
+/* --- One field: label cell + control cell --- */
+
+.form__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-1, 0.25rem);
+  align-items: start;
+}
+
+.form__label {
+  font-weight: var(--font-weight-medium, 500);
+  color: rgb(var(--color-text, 17, 24, 39));
+}
+
+.form__label--required::after {
+  content: ' *';
+  color: rgb(var(--color-error, 220, 38, 38));
+}
+
+/* The control cell: inputs, inline sub-labels and short hints flow in one line
+   and wrap only when they run out of room. */
+.form__control {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1, 0.25rem) var(--space-3, 0.75rem);
+  min-width: 0;
+}
+
+/* A second label inside a shared row: "Start [date]  End [date]".
+   Wrap sublabel + input in .form__pair so they wrap together. */
+.form__sublabel {
+  color: rgb(var(--color-text-muted, 107, 114, 128));
+}
+
+.form__pair {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2, 0.5rem);
+}
+
+/* --- Inputs: sized to their content, not to the page --- */
+
+.form__input {
+  font: inherit;
+  color: inherit;
+  padding: var(--space-1, 0.25rem) var(--space-2, 0.5rem);
+  border: var(--border-width, 1px) solid rgb(var(--color-border, 229, 231, 235));
+  border-radius: var(--radius-sm, 4px);
+  background: rgb(var(--color-background, 255, 255, 255));
+  flex: 1 1 var(--form-w-lg, 20rem);
+  min-width: 0;
+  max-width: var(--form-input-max, 36rem);
+}
+
+.form__input:focus {
+  border-color: rgb(var(--color-primary, 0, 123, 255));
+}
+
+.form__input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.form__input[aria-invalid='true'],
+.form__input--invalid {
+  border-color: rgb(var(--color-error, 220, 38, 38));
+}
+
+/* Short inputs never stretch. Types get a sensible width by default;
+   the modifiers cover text inputs that hold short values (state, zip, year). */
+.form__input--xs { flex: 0 0 var(--form-w-xs, 4ch); }
+.form__input--sm,
+.form__input[type='number'] { flex: 0 0 var(--form-w-sm, 10ch); }
+.form__input--md,
+.form__input[type='date'],
+.form__input[type='time'],
+.form__input[type='month'],
+.form__input[type='tel'] { flex: 0 0 var(--form-w-md, 11rem); }
+.form__input--lg { flex: 0 1 var(--form-w-lg, 20rem); }
+.form__input--full { flex: 1 1 100%; max-width: none; }
+
+select.form__input { flex: 0 1 auto; }
+
+textarea.form__input {
+  flex: 1 1 100%;
+  max-width: none;
+  resize: vertical;
+}
+
+/* --- Help and errors: one short line, only when needed --- */
+
+.form__hint {
+  font-size: var(--font-size-xs, 0.75rem);
+  color: rgb(var(--color-text-muted, 107, 114, 128));
+}
+
+.form__hint--block,
+.form__error {
+  flex-basis: 100%;
+}
+
+.form__error {
+  font-size: var(--font-size-xs, 0.75rem);
+  color: rgb(var(--color-error, 220, 38, 38));
+}
+
+/* --- Checkboxes and radios: inline, wrapping --- */
+
+.form__choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1, 0.25rem) var(--space-4, 1rem);
+}
+
+.form__choice {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1, 0.25rem);
+  cursor: pointer;
+}
+
+/* --- Sections: a small heading and a rule, not a card --- */
+
+.form__section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--form-row-gap, var(--space-2, 0.5rem));
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.form__section + .form__section {
+  margin-top: var(--space-4, 1rem);
+}
+
+.form__legend {
+  width: 100%;
+  margin-bottom: var(--space-2, 0.5rem);
+  padding: 0 0 var(--space-1, 0.25rem);
+  border-bottom: var(--border-width, 1px) solid rgb(var(--color-border, 229, 231, 235));
+  font-size: var(--font-size-xs, 0.75rem);
+  font-weight: var(--font-weight-semibold, 600);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: rgb(var(--color-text-muted, 107, 114, 128));
+}
+
+/* --- Action row --- */
+
+.form__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2, 0.5rem);
+  margin-top: var(--space-2, 0.5rem);
+}
+
+.form__actions--sticky {
+  position: sticky;
+  bottom: 0;
+  padding: var(--space-2, 0.5rem) 0;
+  border-top: var(--border-width, 1px) solid rgb(var(--color-border, 229, 231, 235));
+  background: rgb(var(--color-background, 255, 255, 255));
+}
+
+/* --- Wide form: label beside input ---
+   Label and input text share font size and line height, and the label gets the
+   input's top padding + border, so their first lines sit on one baseline. */
+
+@container (min-width: 36rem) {
+  .form__row {
+    grid-template-columns: var(--form-label-width, 9rem) minmax(0, 1fr);
+    column-gap: var(--form-col-gap, var(--space-3, 0.75rem));
+  }
+
+  .form__label {
+    padding-top: calc(var(--space-1, 0.25rem) + var(--border-width, 1px));
+    text-align: right;
+  }
+
+  .form__row--bare > .form__control {
+    grid-column: 2;
+  }
+
+  .form__choices {
+    padding-top: calc(var(--space-1, 0.25rem) + var(--border-width, 1px));
+  }
+
+  .form__actions {
+    padding-left: calc(var(--form-label-width, 9rem) + var(--form-col-gap, var(--space-3, 0.75rem)));
+  }
+}
+
+/* Force label-above layout regardless of width (rare: very long labels). */
+.form--stacked {
+  container-type: normal;
+}

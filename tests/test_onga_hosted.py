@@ -10,6 +10,7 @@
 """
 import gzip
 import io
+import json
 import subprocess
 import tarfile
 
@@ -78,7 +79,8 @@ def test_runner_hosted_matches_regen(scratch, regen):
     decisions = bundle["repo_decisions"]
     st = derive.status(bundle, decisions)
     assert status.dump(st) == regen["status.json"]
-    assert review.dump(derive.review(bundle, st)) == regen["review.json"]
+    next_id = json.loads(regen["review.json"])["decisions_next_id"]  # the repo store's, as regen saw it
+    assert review.dump(derive.review(bundle, st, next_id)) == regen["review.json"]
 
 
 def _members_tar(members):

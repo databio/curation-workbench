@@ -36,6 +36,7 @@ options:
   examples_dir: examples
   iri_prefixes: {"http://edamontology.org/": edam}
   apply_rank: {facet: 5}
+  browse_base: "https://dev.databio.org/onga"   # the ONGA site; "view in schema site" links
 apply:
   # Everything an apply (including `make regen`) may write.
   snapshot: [src, mappings, curation, examples, proposals, DECISIONS.md, site/public/api]

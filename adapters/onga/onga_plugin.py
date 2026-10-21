@@ -4,6 +4,7 @@ Everything here is specific to ONGA: legacy reference forms, the embeddings
 findings, ENCODE usage, upstream SO requests, facets and SO element types.
 """
 import json
+import re
 from urllib.parse import quote
 
 import yaml
@@ -500,6 +501,141 @@ def patch_proposal(api, req_id):
     raise store.StoreError(404, [f"no upstream request {req_id}"])
 
 
+# ---------------------------------------------------------------- review UI hooks
+#
+# Run at snapshot time only (snapshot.review_hooks); results ride in the bundle.
+
+def mapping_suggestions(wb):
+    """{finding id: {object, label, source, score, definition}} for every
+    suggested mapping in the embeddings mapping report (the same file and ids
+    `embeddings_source` turns into `mapping-suggestion` findings)."""
+    path = wb.cfg.root / REPORTS / "mapping_report.json"
+    if not path.exists():
+        return {}
+    data = json.loads(path.read_text())
+    out = {}
+    for t in data.get("terms") or []:
+        for m in t.get("suggested_mappings") or []:
+            out[m["id"]] = {"object": m["term_id"], "label": m.get("term_name"),
+                            "source": m.get("ontology"), "score": m.get("similarity"),
+                            "definition": m.get("definition")}
+    return out
+
+
+# Browse-page paths of the ONGA site (site/scripts/build-data.js browsePath).
+VOCAB_ENUM_HREFS = {
+    "DataType": "/data-types", "FeatureType": "/feature-types", "Format": "/formats",
+    "StrandOrientation": "/strand-orientation", "ReadMultiplicity": "/read-multiplicity",
+    "FilterStatus": "/filter-status", "Normalization": "/normalization",
+    "Thresholding": "/thresholding", "Derivation": "/derivation",
+    "ReferenceBuildSex": "/reference-build-sex", "HaplotypeResolution": "/haplotype-resolution",
+}
+CLASS_HREF_OVERRIDES = {
+    "TrackFormat": "/track-format", "TrackInterpretation": "/track-interpretation",
+    "TrackProvenance": "/track-provenance", "TrackGeometry": "/track-geometry",
+    "ReferenceGenome": "/reference-genome",
+}
+
+
+def slugify(name):
+    return re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")
+
+
+def browse_path(s):
+    if s.get("retired"):
+        return None
+    cls = lambda c: CLASS_HREF_OVERRIDES.get(c) or f"/schema/class/{c}"  # noqa: E731
+    enum = lambda e: VOCAB_ENUM_HREFS.get(e) or f"/schema/enum/{e}"     # noqa: E731
+    kind = s["kind"]
+    if kind == "class":
+        return cls(s["name"])
+    if kind == "enum":
+        return enum(s["name"])
+    if kind == "term":
+        if s.get("enum") == "DataType":
+            return f"/data-types/{slugify(s.get('label') or '')}"
+        if s.get("enum") == "FeatureType":
+            return f"/feature-types/{slugify(s.get('label') or '')}"
+        return enum(s.get("enum"))
+    if kind == "slot":
+        return cls(s["owner_class"]) if s.get("owner_class") else None
+    if kind == "usage":
+        return cls(s["name"].split("/")[0])
+    return None
+
+
+def browse_url(wb, subject):
+    base = wb.option("browse_base")
+    path = browse_path(subject)
+    return f"{base.rstrip('/')}{path}" if base and path else None
+
+
+def subject_panels(wb):
+    """Usage (ENCODE files and datasets) and upstream requests citing a term."""
+    view = wb.snapshot_view
+    out = {}
+    path = wb.cfg.root / "curation" / "usage.json"
+    usage = json.loads(path.read_text()) if path.exists() else {}
+    for sid, u in usage.items():
+        if not isinstance(u, dict) or sid not in view["subjects"]:
+            continue
+        seeds = u.get("contributing_seed_terms") or []
+        panel = {"title": "Usage",
+                 "text": f"{u.get('encode_files', 0):,} ENCODE files in "
+                         f"{u.get('encode_datasets', 0):,} datasets."}
+        if seeds:
+            panel["table"] = {"columns": ["Contributing seed term"], "rows": [[t] for t in seeds]}
+        out.setdefault(sid, []).append(panel)
+    upath = wb.cfg.root / UPSTREAM
+    doc = (yaml.safe_load(upath.read_text()) or {}) if upath.exists() else {}
+    entries = [r for key in ("requests", "rejections")
+               for lst in (doc.get(key) or {}).values() for r in lst or []]
+    base = wb.option("browse_base")
+    href = f"{base.rstrip('/')}/develop/so-proposals" if base else None
+    for sid, s in view["subjects"].items():
+        if s["kind"] != "term" or s.get("retired"):
+            continue
+        needles = [f'"{s[k]}"' for k in ("label", "term_id") if s.get(k)]
+        citing = [r for r in entries if any(n in json.dumps(r) for n in needles)]
+        if citing:
+            out.setdefault(sid, []).append({
+                "title": "Upstream requests citing this term",
+                "links": [{"label": " · ".join(str(x) for x in (r.get("id"), r.get("status") or "",
+                                                               r.get("proposed_label") or
+                                                               (r.get("target") or {}).get("label") or
+                                                               r.get("disposition") or "") if x),
+                           "href": href} for r in citing]})
+    return out
+
+
+def review_prompts(wb):
+    """curation/review_prompts.yaml matched against every subject (kind, layer,
+    signal), with `$subject` filled into suggested operations."""
+    path = wb.cfg.root / "curation" / "review_prompts.yaml"
+    if not path.exists():
+        return {}
+    prompts = (yaml.safe_load(path.read_text()) or {}).get("prompts") or []
+    view = wb.snapshot_view
+    out = {}
+    for sid, s in view["subjects"].items():
+        for p in prompts:
+            w = p.get("when") or {}
+            if w.get("kind") and s["kind"] not in w["kind"]:
+                continue
+            if w.get("layer") and s.get("layer") not in w["layer"]:
+                continue
+            if w.get("signal") and not any((view["signals"].get(k) or {}).get(sid) for k in w["signal"]):
+                continue
+            op = p.get("suggested_operation")
+            if op:
+                op = {k: sid if v == "$subject" else v for k, v in op.items()}
+            out.setdefault(sid, []).append({
+                "id": p["id"], "title": p["title"], "text": p["text"], "source": p.get("source"),
+                "suggested_verdict": p.get("suggested_verdict"), "suggested_operation": op,
+                "decide_on": p.get("decide_on")})
+    return out
+
+
 def register(wb):
     wb.routes.append(("PATCH", "/api/proposals/", patch_proposal))
     wb.legacy_forms.append(legacy_forms)
@@ -507,6 +643,10 @@ def register(wb):
     wb.record_checks.append(promote_tier_check)
     wb.findings_sources.append(embeddings_source)
     wb.term_usage.append(encode_usage)
+    wb.suggestions.append(mapping_suggestions)
+    wb.browse_url = browse_url
+    wb.subject_panels.append(subject_panels)
+    wb.review_prompts.append(review_prompts)
     wb.signals["upstream"] = upstream
     wb.lint_rules.append(facet_rules)
     install_ref_providers(wb)

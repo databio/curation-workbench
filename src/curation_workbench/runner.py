@@ -274,7 +274,7 @@ def _committed_output_warnings(wb, bundle) -> list[str]:
     files = snapshot.files(wb, bundle)
     st = derive.status(bundle, bundle["repo_decisions"])
     files[wb.cfg.output("status.json")] = status.dump(st)
-    rv = derive.review(bundle, st)
+    rv = derive.review(bundle, st, review.next_id(wb.store))
     if rv is not None:
         files[wb.cfg.output("review.json")] = review.dump(rv)
 

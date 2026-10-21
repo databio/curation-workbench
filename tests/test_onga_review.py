@@ -15,5 +15,5 @@ def test_review_counts(scratch):
     wb = Workbench.open(ADAPTER, root=scratch)
     data = review.build(wb)
     got = {t["id"]: {ty["id"]: ty["count"] for ty in t["types"]} for t in data["tracks"]}
-    assert got == EXPECTED
+    assert data["version"] == 2 and got == EXPECTED
     assert sum(t["total"] for t in data["tracks"]) == 396

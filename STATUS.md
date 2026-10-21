@@ -69,8 +69,16 @@ annotation, id scheme, examples dir) are now options in `workbench.yaml`.
 
 ## Next
 
-- A review UI that reads `review.json` + the daemon (the ONGA site's queue pages
-  are the model; today they live in ONGA's Astro site).
+- Review UI (2026-10-21): a React app in `frontend/`, served by `cwb serve`
+  (Review / Apply / More, type pages with one-click answers, subject page with
+  the full decision form, apply with dry run). Items are built in Python
+  (`answers.py`, review.json version 2); every item equals the ONGA site's
+  `itemsFor()` on all 10 review types (`tests/test_onga_review_items.py`).
+  The hosted backend (`frontend/src/api/hosted.ts`) is written to the hosted
+  plan's routes and tested with a mocked fetch only; the hosted service does
+  not exist yet. Still to do, with Nathan's go-ahead: cut ONGA over (delete
+  its Astro queue pages, `make curate` runs `cwb serve`), then drop the
+  daemon's CORS support.
 - Point ONGA at this package (plan 6): move `adapters/onga/` into the ONGA repo
   (`workbench.yaml` at the root with `plugin_dir: curation/plugin`, the plugin
   in `curation/plugin/`, review types in `curation/review_types.yaml`), replace
