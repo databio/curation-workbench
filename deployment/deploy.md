@@ -37,7 +37,7 @@ An agent skipped these because they need ssh to goat. Run them and look at the
 answers; none of them changes anything.
 
 ```bash
-# Goat capacity. The app adds about 512M (API) + 512M (worker) + up to 2G (runner cap).
+# Goat capacity. The app adds about 512M (API) + 512M (worker) + up to 512M (runner cap).
 # If /var has under 5 GB free, or used memory plus the new caps passes physical RAM, stop and decide.
 ssh $GOAT "free -m; df -h /var; docker system df; docker stats --no-stream --format '{{.Name}} {{.MemUsage}}'"
 
