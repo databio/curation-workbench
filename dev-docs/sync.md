@@ -187,8 +187,8 @@ Same image as the API, stack `curate`. The image needs `git`, and
   (900), `CWB_WORKER_MAX_ATTEMPTS` (3), `CWB_MAX_TREE_BYTES` (200 MiB),
   `CWB_ALLOWED_GIT_HOSTS` (github.com), `CWB_RUNNER_TIMEOUT` (300).
 - **`curate-runner`** (`cwb runner --port 8150`): no secrets, no `curate_env`,
-  only `run_net` (internal overlay, no route out), read-only root, 512 MiB
-  tmpfs `/tmp`, uid 1000, all capabilities dropped, memory 2 GiB, CPU 1,
+  only `run_net` (internal overlay, no route out), read-only root, 256 MiB
+  tmpfs `/tmp`, uid 1000, all capabilities dropped, memory 512 MiB (1 GiB max), CPU 1,
   pids 256, one replica. Env: `CWB_RUNNER_TIMEOUT`, `CWB_MAX_TREE_BYTES`.
 - `verify.sh` should check: worker and runner 1/1; the runner has no secrets,
   a read-only root, no capabilities and only `curate_run_net`; over ssh,
