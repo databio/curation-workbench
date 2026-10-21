@@ -8,6 +8,8 @@ dependencies = ["pyyaml>=6", "ruamel.yaml>=0.18"]
 [project.optional-dependencies]
 # Hosted mode's decision store (psycopg 3 only; never psycopg2).
 postgres = ["sqlalchemy>=2.0,<2.2", "psycopg[binary]>=3.2"]
+# Hosted mode: the store plus the sync worker (the API service adds its own deps here).
+hosted = ["sqlalchemy>=2.0,<2.2", "psycopg[binary]>=3.2"]
 test = ["pytest>=8", "sqlalchemy>=2.0,<2.2", "psycopg[binary]>=3.2"]
 
 [project.scripts]

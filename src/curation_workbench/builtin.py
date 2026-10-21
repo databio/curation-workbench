@@ -7,6 +7,7 @@ def register(wb):
     from . import signals, store
     from .handlers import RecordOnly, content, schema
     wb.signals.update(signals.BUILTIN)
+    wb.masked_signals.update(signals.MASKED)
     for h in content.handlers() + schema.handlers():
         wb.handler(h)
     if wb.cfg.verdicts.exists():

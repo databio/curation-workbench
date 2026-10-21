@@ -291,8 +291,9 @@ def dump_json(d):
 GENERATED_BY = "cwb subjects; do not edit"
 
 
-def render(wb):
-    """{output path: text} for the three registry files, plus the counts."""
+def document(wb):
+    """(subjects doc, crosswalk doc, aliases, counts): the three registry files'
+    contents as data. Raises RegistryError when the counts disagree with the YAML."""
     records, crosswalk = build(wb)
     c = counts(records)
     live = live_counts(wb)
@@ -301,7 +302,18 @@ def render(wb):
         raise RegistryError(f"counts {got} disagree with the schema {live}")
     doc = {"_generated_by": GENERATED_BY, "schema_fingerprint": fingerprint(records),
            "counts": c, "subjects": records}
+    return doc, {"_generated_by": GENERATED_BY, **crosswalk}, aliases(wb), c
+
+
+def files(wb, doc, crosswalk, alias_map):
+    """{output path: text} for the three registry files."""
     out = wb.cfg.output
     return {out("subjects.json"): dump_json(doc),
-            out("term_crosswalk.json"): dump_json({"_generated_by": GENERATED_BY, **crosswalk}),
-            out("subject_aliases.json"): dump_json(aliases(wb))}, c
+            out("term_crosswalk.json"): dump_json(crosswalk),
+            out("subject_aliases.json"): dump_json(alias_map)}
+
+
+def render(wb):
+    """{output path: text} for the three registry files, plus the counts."""
+    doc, crosswalk, alias_map, c = document(wb)
+    return files(wb, doc, crosswalk, alias_map), c

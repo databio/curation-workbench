@@ -246,12 +246,16 @@ def _write_registry(wb):
 
 
 def _regen_inprocess(wb):
-    from . import lint, status
-    _write_registry(wb)
-    text, _ = lint.render(wb)
-    _write(wb.cfg.findings_dir / "schema_lint.json", text)
-    text, _ = status.render(wb)
-    _write(wb.cfg.output("status.json"), text)
+    from . import derive, snapshot, status
+    bundle = snapshot.build(wb)
+    files = snapshot.files(wb, bundle)
+    lint_path = wb.cfg.findings_dir / snapshot.LINT_FILE
+    lint_text = files.pop(lint_path)
+    for p, text in files.items():
+        if not p.exists() or p.read_text() != text:
+            _write(p, text)
+    _write(lint_path, lint_text)
+    _write(wb.cfg.output("status.json"), status.dump(derive.status(bundle, wb.store.records())))
     for fn in wb.regen:
         fn(wb, wb.cfg.out)
 

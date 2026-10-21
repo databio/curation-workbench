@@ -11,8 +11,9 @@ Endpoints
   POST   /api/decisions           create; mints DEC-NNNN              -> 201
   PUT    /api/decisions/<id>      replace a pending record
   DELETE /api/decisions/<id>      withdraw (status: withdrawn; never removed)
-  GET    /api/subjects            subjects.json
-  GET    /api/status              status.json (404 until it exists)
+  GET    /api/subjects            subjects.json (from the cached snapshot bundle)
+  GET    /api/status              status.json, derived now from the cached bundle and
+                                  the current decisions (snapshot.py + derive.py)
   GET    /api/review_types        review_types.yaml as JSON (404 if the project has none)
   POST   /api/apply               run `cwb apply` (streams its output)
   GET    /api/apply               the last run's log: {running, dry_run, log, exit}
@@ -21,6 +22,11 @@ Plugins add routes with `wb.routes.append((method, prefix, fn))`, where
 fn(api, tail) handles the request (a prefix ending in "/" passes the rest of
 the path as `tail`); `api.workbench` is the Workbench, and `api.json_body()`,
 `api.send(code, body)` and `store.StoreError` work as in the builtin routes.
+
+The daemon keeps one snapshot bundle (snapshot.build) in memory and rebuilds
+it only when an input file's mtime changes (schema modules, SSSOM files, the
+term ledger, policy, verdicts, review types, findings files). A decision write
+does not rebuild it; status is re-derived from it on every request.
 
 Every decision write goes through the workbench's store (`wb.store`, a
 YamlStore here; `store.validate` is the one gate). Errors are
@@ -41,12 +47,15 @@ import json
 import socket
 import subprocess
 import sys
+import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
 import yaml
 
-from . import store
+from . import derive, snapshot, store
+from . import status as status_mod
+from . import subjects as subjects_mod
 from .store.yaml_store import LOCK
 
 SERVER_FIELDS = ("id", "decided_by", "decided_on", "schema_fingerprint", "status", "applied", "origin")
@@ -69,8 +78,25 @@ def make_handler(wb, decided_by):
         out = subprocess.run(["git", "-C", str(cfg.root), *args], capture_output=True, text=True)
         return out.stdout.strip()
 
+    cache = {"key": None, "bundle": None}
+    cache_lock = threading.Lock()
+
+    def input_key():
+        paths = [*cfg.schema_dir.glob("*.yaml"), *cfg.sssom_files(), cfg.ledger, cfg.policy,
+                 cfg.verdicts, cfg.review_types, *cfg.findings_dir.glob("*.json")]
+        return tuple(sorted((str(p), p.stat().st_mtime_ns) for p in paths if p.exists()))
+
+    def bundle():
+        """The project's snapshot bundle, rebuilt when an input file changed."""
+        with cache_lock:
+            key = input_key()
+            if cache["key"] != key:
+                cache["bundle"] = snapshot.build(wb)
+                cache["key"] = key
+            return cache["bundle"]
+
     def subjects():
-        return store.Subjects.load(cfg.output("subjects.json"))
+        return store.Subjects(bundle()["subjects"])
 
     def verdicts():
         return store.load_verdicts(cfg.verdicts)
@@ -153,6 +179,8 @@ def make_handler(wb, decided_by):
                         return self.error(e.status, e.errors, **extra)
                     except FileNotFoundError as e:
                         return self.error(503, [f"missing input: {e.filename}"])
+                    except subjects_mod.RegistryError as e:
+                        return self.error(503, [f"subject registry failed: {e}"])
             self.error(404, [f"no route {self.command} {path}"])
 
         # -------------------------------------------------------- verbs
@@ -169,8 +197,10 @@ def make_handler(wb, decided_by):
             self._dispatch([
                 ("/api/health", self.health),
                 ("/api/decisions", lambda _: self.send(200, self._store_json())),
-                ("/api/subjects", lambda _: self._file(cfg.output("subjects.json"))),
-                ("/api/status", lambda _: self._file(cfg.output("status.json"))),
+                ("/api/subjects", lambda _: self.send(
+                    200, subjects_mod.dump_json(bundle()["subjects"]).encode())),
+                ("/api/status", lambda _: self.send(200, status_mod.dump(
+                    derive.status(bundle(), wb.store.records())).encode())),
                 ("/api/review_types", self.review_types),
                 ("/api/apply", lambda _: self.send(200, Api.last_apply)),
             ])
@@ -188,11 +218,6 @@ def make_handler(wb, decided_by):
             self._dispatch([])
 
         # -------------------------------------------------------- handlers
-
-        def _file(self, path):
-            if not path.exists():
-                return self.error(404, [f"{cfg.rel(path)} not generated yet"])
-            self.send(200, path.read_bytes())
 
         def health(self, _):
             self.send(200, {

@@ -24,6 +24,7 @@ first project; see `adapters/onga/`.
 ```bash
 uv venv && uv pip install -e ".[test]"          # tests include the Postgres store's
 uv pip install -e ".[postgres]"                 # hosted store only (SQLAlchemy + psycopg 3)
+uv pip install -e ".[hosted]"                   # hosted mode (store + sync worker)
 ```
 
 ## Commands
@@ -34,12 +35,34 @@ cwb -c workbench.yaml lint [--check]       # findings/schema_lint.json
 cwb -c workbench.yaml status [--check]     # status.json: state + queue score per subject
 cwb -c workbench.yaml review [--check]     # review.json: queue sorted into review tracks/types
 cwb -c workbench.yaml regen [--check]      # all of the above, in order
+cwb -c workbench.yaml snapshot [--out F]   # the commit-phase bundle as JSON (see below)
+cwb derive --snapshot F --decisions D [--out DIR]  # status.json + review.json from a bundle
 cwb -c workbench.yaml apply [--dry-run] [--ids DEC-0001 ...] [--emit pending.json]
 cwb -c workbench.yaml serve [--port 8781]  # local decision daemon (loopback only)
 ```
 
 Global flags: `--root` (the project tree; overrides the config) and `--out`
-(where generated files go; default the curation dir).
+(where generated files go; default the curation dir). `--decisions` takes a
+JSON list of decision records or a `decisions.yaml`.
+
+Regen runs in two phases. `snapshot` computes everything that depends only on
+the repo at one commit (subjects, aliases, lint and plugin findings, every
+queue signal) into one JSON bundle; it is the only place plugin code runs.
+`derive` turns a bundle plus a decision list into status.json and review.json
+with no plugin calls. `cwb regen` is the two in a row, and the daemon keeps
+one bundle in memory and re-derives status on each request.
+
+Hosted mode adds (needs the `hosted` extra; see `dev-docs/sync.md`):
+
+```bash
+cwb runner [--port 8150]                     # the isolated runner: all repo code runs here
+cwb hosted worker                            # the sync worker (mirrors repos, publishes snapshots)
+cwb hosted resident add --project onga --repo https://github.com/databio/onga \
+    --branch master --config workbench.yaml --plugin-dir curation/plugin
+cwb hosted resident list | show | check | plugin-diff | approve-plugin --tree T |
+    revoke-plugin | sync [--wait] | update | disable | rotate-webhook-secret <slug>
+cwb hosted isolation-check                   # in the worker task: prove the runner is isolated
+```
 
 ## A project
 
@@ -77,6 +100,8 @@ mappings:
 curation: {dir: curation}
 review_types: null          # path relative to this file; default curation/review_types.yaml
 plugins: []                 # modules importable from this file's folder
+plugin_dir: null            # folder (relative to this file) holding the plugin modules
+                            # and their helpers; when set, plugins import from it only
 options:                    # read by generic rules and signals
   adoption_root: class:File          # queue signal: reachable from this class
   import_source_prefix: null         # classes whose `source:` starts with this are "ported"
@@ -105,6 +130,7 @@ everything project-specific goes through these hooks:
 | `wb.legacy_forms` | `(tid, enum, label) -> [str]` | term crosswalk |
 | `wb.findings_sources` | `(wb, fingerprint, severity_of) -> (findings, sources)` | status, review |
 | `wb.signals[name]` | `(ctx) -> {sid: value}` (one per `queue:` weight) | status |
+| `wb.masked_signals[name]` | same; zeroed where a terminal decision exists (builtin: `port`) | status |
 | `wb.term_usage` | `(wb) -> {term sid: count}` | `impact` signal, usage lint rules |
 | `wb.lint_rules` | `(linter) -> None`, calls `linter.emit(rule, sids, msg)` | lint |
 | `wb.operation_checks` | `(verdict, op) -> [error]` | decision validation |
@@ -117,6 +143,17 @@ everything project-specific goes through these hooks:
 | `wb.protected_names` | `(ctx, section) -> {name: reason}` | class/enum rename, move, delete |
 | `wb.routes` | `(method, prefix, fn(api, tail))` | daemon |
 | `wb.regen` | `(wb, out_dir)` | `cwb regen`, in-process apply regen |
+
+Signals and findings are computed once per commit, so they may not read
+decisions: a signal's `ctx` has `wb`, `subjects` and `labels`, nothing else.
+
+**Hosted mode** (plugins run only in the isolated runner, and only from a
+plugin tree a superadmin approved): `plugin_dir` is required when `plugins`
+is non-empty; each plugin must be a module file directly in it, and helper
+modules it imports must sit beside it (and be imported at module top level);
+every config path must stay inside the repo; `apply:`, `wb.routes` and
+`wb.regen` are ignored with a warning. Plugins may import only the standard
+library, `yaml`, `ruamel.yaml` and `curation_workbench`.
 
 ## Storage
 
@@ -167,7 +204,7 @@ editing the owning file and recreating the dev database; after it, only add file
 | `010-019` | storage | `010_projects.sql`, `011_decisions.sql`, `012_votes.sql`, `013_decision_votes.sql` |
 | `020-029` | hosted service | team members, question resolutions, user foreign keys |
 | `030-039` | free | |
-| `040-049` | sync worker | residents, snapshots, derived status, sync jobs, stale events |
+| `040-049` | sync worker | `040_residents_sync.sql` (residents, plugin approvals, snapshots, derived status, sync jobs, stale events) |
 | `090-099` | hosted service | snapgate upgrades |
 
 ## The ONGA reproduction

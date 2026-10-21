@@ -7,6 +7,7 @@ through a hook registered here by a plugin module's `register(wb)`:
         wb.legacy_forms.append(fn)          # (tid, enum, label) -> [reference strings]
         wb.findings_sources.append(fn)      # (wb, fingerprint, severity_of) -> (findings, sources)
         wb.signals["name"] = fn             # (ctx) -> {sid: number}; see status.py
+        wb.masked_signals["name"] = fn      # same, zeroed where a terminal decision exists
         wb.term_usage.append(fn)            # (wb) -> {term sid: usage count}, feeds `impact`
         wb.lint_rules.append(fn)            # (lint ctx) -> None (calls ctx.add)
         wb.operation_checks.append(fn)      # (verdict, op) -> [error]
@@ -19,12 +20,32 @@ through a hook registered here by a plugin module's `register(wb)`:
         wb.handler_check(kind, verdict, fn)  # (handler, rec, ctx) -> [error]
         wb.routes.append((method, prefix, fn))  # daemon route; fn(api, tail)
 
-Plugin modules are imported from the config file's folder (then sys.path).
+Plugin modules are imported from `plugin_dir` when the config sets it (only
+that folder is on sys.path while they import, so helpers must be imported at
+module top level), else from the config file's folder (then sys.path).
+
+Signal and findings hooks are computed once per commit (snapshot.py) and must
+not read decisions; a signal's `ctx` has no decision data.
+
+Hosted mode (`open(..., hosted=True)`, used only by the isolated runner): the
+project tree is the checkout, every config path must stay inside it,
+`plugin_dir` is required when plugins are listed, each plugin must be a file
+directly in it, and `apply:`, `wb.routes` and `wb.regen` are ignored (each
+with a warning in `wb.warnings`). Plugins may import only the standard
+library, `yaml`, `ruamel.yaml` and `curation_workbench`; the runner, not this
+code, is the guard.
 """
 import importlib
 import sys
+from pathlib import Path
 
-from .config import Config
+from .config import Config, ConfigError
+
+
+class PluginError(Exception):
+    """A plugin that cannot be loaded (code `plugin_import_failed`)."""
+
+    code = "plugin_import_failed"
 
 
 class Workbench:
@@ -33,6 +54,7 @@ class Workbench:
         self.legacy_forms = []
         self.findings_sources = []
         self.signals = {}
+        self.masked_signals = {}   # signals zeroed by derive where a terminal decision exists
         self.term_usage = []
         self.lint_rules = []
         self.operation_checks = []
@@ -46,35 +68,85 @@ class Workbench:
         self.regen = []            # (wb, out_dir) -> None, extra generators run by `cwb regen`
         self.routes = []           # (method, prefix, fn(api, tail)) extra daemon routes
         self.plugins = []
+        self.hosted = False
+        self.warnings = []         # hosted mode: what was ignored (carried in the snapshot bundle)
         from .store import YamlStore
         self.store = YamlStore(cfg.decisions)   # decision store; the hosted app passes a PgStore
 
     @classmethod
-    def open(cls, config_path, out=None, root=None, plugins=True, store=None):
+    def open(cls, config_path, out=None, root=None, plugins=True, store=None, hosted=False):
         """Load a project. `root` overrides the config's project tree (paths are
         re-resolved against it); `out` overrides where generated files go;
-        `store` replaces the default decision store (the project's decisions.yaml)."""
+        `store` replaces the default decision store (the project's decisions.yaml);
+        `hosted` applies the hosted-mode rules (module docstring) with `root`
+        as the checkout."""
         cfg = Config.load(config_path, root=root)
         if out is not None:
-            from pathlib import Path
             cfg.out = Path(out).resolve()
+        if hosted:
+            if root is None:
+                raise ConfigError("config_invalid", "hosted mode needs root (the checkout)")
+            cfg.check_contained(root)
+            if plugins and cfg.plugins and cfg.plugin_dir is None:
+                raise ConfigError("config_invalid",
+                                  "plugin_dir is required in hosted mode when plugins are listed")
         wb = cls(cfg)
+        wb.hosted = hosted
         if store is not None:
             wb.store = store
         from . import builtin
         builtin.register(wb)
         if plugins:
             wb.load_plugins()
+        if hosted:
+            wb._apply_hosted_rules()
         return wb
 
     def load_plugins(self):
-        here = str(self.cfg.path.parent)
-        if here not in sys.path:
-            sys.path.insert(0, here)
-        for name in self.cfg.plugins:
-            mod = importlib.import_module(name)
-            mod.register(self)
-            self.plugins.append(mod)
+        pdir = self.cfg.plugin_dir
+        if pdir is None:
+            here = str(self.cfg.path.parent)
+            if here not in sys.path:
+                sys.path.insert(0, here)
+            for name in self.cfg.plugins:
+                mod = importlib.import_module(name)
+                mod.register(self)
+                self.plugins.append(mod)
+            return
+        if self.hosted:
+            for name in self.cfg.plugins:
+                if not isinstance(name, str) or not name.isidentifier() \
+                        or not (pdir / f"{name}.py").is_file():
+                    raise PluginError(f"plugin {name!r} is not a module file in {self.cfg.rel(pdir)}")
+        sys.path.insert(0, str(pdir))
+        try:
+            for name in self.cfg.plugins:
+                if self.hosted:
+                    sys.modules.pop(name, None)
+                try:
+                    mod = importlib.import_module(name)
+                    if self.hosted and Path(mod.__file__).resolve().parent != pdir:
+                        raise PluginError(f"plugin {name} did not come from {self.cfg.rel(pdir)}")
+                    mod.register(self)
+                except PluginError:
+                    raise
+                except Exception as e:
+                    if not self.hosted:
+                        raise
+                    raise PluginError(f"plugin {name} failed to load: {type(e).__name__}: {e}") from e
+                self.plugins.append(mod)
+        finally:
+            sys.path.remove(str(pdir))
+
+    def _apply_hosted_rules(self):
+        if self.cfg.data.get("apply"):
+            self.warnings.append("the apply: section is ignored in hosted mode")
+        if self.routes:
+            self.warnings.append(f"{len(self.routes)} plugin daemon route(s) ignored in hosted mode")
+            self.routes = []
+        if self.regen:
+            self.warnings.append(f"{len(self.regen)} plugin regen hook(s) ignored in hosted mode")
+            self.regen = []
 
     def handler(self, obj):
         """Register an apply handler instance (keyed by its `kind` and `verdict`);

@@ -25,6 +25,22 @@ same contract tests (`tests/test_store_contract.py`); Postgres-only behavior is
 in `tests/test_pg_store.py` (`scripts/test-postgres.sh`). `cwb apply` is
 local-only by design: hosted decisions reach the repo through export.
 
+Sync worker (2026-10-21): regen is split into `snapshot` (everything that
+depends on the repo at one commit; the only place plugin code runs) and
+`derive` (status/review from a bundle plus decisions; generic code).
+Local output is unchanged (byte-identical status.json, and review.json counts
+as before). Hosted mode adds resident projects (`cw_residents`, migration
+040), a sync worker that mirrors each resident's repo, builds one snapshot
+per commit in an isolated runner (`cwb runner`, plugins only from a
+superadmin-approved git tree), publishes it to Postgres with the derived
+status/review, and marks votes and pending hosted decisions stale when their
+subject changed. ONGA through the hosted path (git archive of its tree, the
+adapter laid out as plan 6 puts it in ONGA, runner in a child process)
+derives the same status.json and review.json as `cwb regen`
+(`tests/test_onga_hosted.py`). Not yet exercised: the runner inside Docker
+with Swarm isolation (`cwb hosted isolation-check` there), a real GitHub
+remote and webhook. See dev-docs/sync.md.
+
 ## Behavior differences
 
 - **Protected-name refusals** read `X is protected (named in site/scripts/build-data.js); ...`
@@ -55,9 +71,13 @@ annotation, id scheme, examples dir) are now options in `workbench.yaml`.
 
 - A review UI that reads `review.json` + the daemon (the ONGA site's queue pages
   are the model; today they live in ONGA's Astro site).
-- Point ONGA at this package: move `adapters/onga/` into the ONGA repo, replace
+- Point ONGA at this package (plan 6): move `adapters/onga/` into the ONGA repo
+  (`workbench.yaml` at the root with `plugin_dir: curation/plugin`, the plugin
+  in `curation/plugin/`, review types in `curation/review_types.yaml`), replace
   its scripts/workbench and the five scripts with `cwb`, and switch its Makefile.
-- The hosted multi-user version: Prosopia sign-in, teams, the API, the sync
-  worker and deployment. (Done: votes and hosted decisions in Postgres.)
+  Then register ONGA as the first resident (dev-docs/sync.md).
+- The hosted multi-user version: Prosopia sign-in, teams, the API and
+  deployment. (Done: votes and hosted decisions in Postgres; the sync worker,
+  runner and resident projects.)
 - ONGA's `curation/verdicts.yaml` cannot be read by PyYAML (a flow map at line
   255 uses `?`); ruamel reads it. Harmless today, but worth fixing in ONGA.

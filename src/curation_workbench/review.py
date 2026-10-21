@@ -2,7 +2,8 @@
 
 `review_types.yaml` (see adapters/onga/review_types.yaml for the format)
 declares tracks (by subject kind) and, inside each, types (by finding rule).
-`build(wb)` sorts every queue item into them and returns review.json:
+`derive.review(bundle, status)` sorts every queue item into them (`build(wb)`
+is the local-mode wrapper over snapshot + derive) and returns review.json:
 
   {_generated_by, schema_fingerprint, tracks: [{id, title, blurb, kinds, total,
      types: [{id, title, question, answers, help, answers_kind, count,
@@ -52,63 +53,24 @@ def to_curie(obj, prefixes):
 
 
 def build(wb):
-    data = load(wb)
-    if data is None:
+    """review.json data for the workbench's project and its own decision store."""
+    if load(wb) is None:
         raise ReviewTypesError(f"{wb.cfg.rel(wb.cfg.review_types)} does not exist")
-    cfg = wb.cfg
-    status = json.loads(cfg.output("status.json").read_text())
-    subjects = json.loads(cfg.output("subjects.json").read_text())["subjects"]
-    findings = {}
-    lint_path = cfg.findings_dir / "schema_lint.json"
-    if lint_path.exists():
-        findings.update({f["id"]: f for f in json.loads(lint_path.read_text())["findings"]})
-    severity_of = ((yaml.safe_load(cfg.policy.read_text()) or {}).get("status") or {}) \
-        .get("finding_severity") or {}
-    for fn in wb.findings_sources:
-        fs, _ = fn(wb, status["schema_fingerprint"], severity_of)
-        findings.update({f["id"]: f for f in fs})
-    prefixes = wb.option("iri_prefixes", {}) or {}
+    from . import derive, snapshot
+    bundle = snapshot.build(wb)
+    status = derive.status(bundle, wb.store.records())
+    return derive.review(bundle, status, wb.store.snapshot().get("next_id"))
 
-    def open_findings(sid):
-        objs = {r.get("object") for r in subjects[sid]["payload"].get("sssom") or []} \
-            if subjects[sid]["kind"] == "term" else set()
-        out = []
-        for fid in status["subjects"][sid]["open_findings"]:
-            f = findings.get(fid)
-            if f is None:
-                continue
-            if f.get("object") and to_curie(f["object"], prefixes) in objs:
-                continue
-            out.append(f)
-        return out
 
-    tracks = []
-    for t in data["tracks"]:
-        types = [{**{k: v for k, v in ty.items() if k not in ("rules", "fallback")},
-                  "count": 0, "items": []} for ty in t["types"]]
-        total = 0
-        for sid in status["queue"]:
-            if subjects[sid]["kind"] not in t["kinds"]:
-                continue
-            total += 1
-            found = open_findings(sid)
-            rules = {f["rule"] for f in found}
-            hits = [i for i, ty in enumerate(t["types"]) if set(ty.get("rules") or []) & rules]
-            if not hits:
-                hits = [i for i, ty in enumerate(t["types"]) if ty.get("fallback")]
-            for i in hits:
-                mine = [f["id"] for f in found if f["rule"] in (t["types"][i].get("rules") or [])]
-                types[i]["items"].append({"sid": sid, "findings": mine})
-                types[i]["count"] += 1
-        tracks.append({**{k: v for k, v in t.items() if k != "types"}, "total": total, "types": types})
-    return {"_generated_by": GENERATED_BY, "schema_fingerprint": status["schema_fingerprint"],
-            "tracks": tracks}
+def dump(data):
+    return json.dumps(data, indent=1, ensure_ascii=False) + "\n"
+
+
+def summary(data):
+    return "; ".join(f"{t['id']} {t['total']}: " + " ".join(f"{ty['id']}={ty['count']}" for ty in t["types"])
+                     for t in data["tracks"])
 
 
 def render(wb):
     data = build(wb)
-    text = json.dumps(data, indent=1, ensure_ascii=False) + "\n"
-    summary = "; ".join(f"{t['id']} {t['total']}: " + " ".join(f"{ty['id']}={ty['count']}" for ty in t["types"])
-                        for t in data["tracks"])
-    return text, summary
-
+    return dump(data), summary(data)

@@ -5,7 +5,8 @@ Configured through `options:` in workbench.yaml:
   adoption_root         SID of the class whose reachable subjects get `adoption`
   import_source_prefix  classes whose `source:` starts with this are imported
                         ("ported"); they and the slots/enums in their modules get
-                        `port` until a terminal decision covers them
+                        `port` until a terminal decision covers them (`port` is a
+                        masked signal: derive.py zeroes it where one exists)
   machine_definitions   YAML file {definitions: [{subject, description}]}: subjects
                         whose description still equals the machine draft get `machine`
 Term usage counts for `impact` come from `wb.term_usage` hooks ((wb) -> {sid: n}).
@@ -105,7 +106,9 @@ def required(ctx):
             if s["kind"] == "slot" and bool(s["payload"].get("required"))}
 
 
-def port(ctx):
+def ported(ctx):
+    """1 for imported classes and the slots/enums in their modules. Registered
+    as a masked signal: derive zeroes it once a terminal decision covers the subject."""
     prefix = ctx.wb.option("import_source_prefix")
     if not prefix:
         return {}
@@ -113,9 +116,9 @@ def port(ctx):
     classes = {sid for sid, s in subjects.items() if s["kind"] == "class"
                and str(s["payload"].get("source") or "").startswith(prefix)}
     modules = {subjects[sid]["module"] for sid in classes}
-    ported = classes | {sid for sid, s in subjects.items()
-                        if s["kind"] in ("slot", "enum") and s["module"] in modules}
-    return {sid: 1 for sid in ported if ctx.last_terminal.get(sid) is None}
+    found = classes | {sid for sid, s in subjects.items()
+                       if s["kind"] in ("slot", "enum") and s["module"] in modules}
+    return {sid: 1 for sid in found}
 
 
 def machine(ctx):
@@ -132,5 +135,5 @@ def machine(ctx):
     return out
 
 
-BUILTIN = {"impact": impact, "adoption": adoption, "required": required,
-           "port": port, "machine": machine}
+BUILTIN = {"impact": impact, "adoption": adoption, "required": required, "machine": machine}
+MASKED = {"port": ported}

@@ -1,6 +1,7 @@
 """Schema linter: machine findings over every subject kind.
 
-Reads subjects.json, the schema files (for attached comments), decisions.yaml
+Reads the subject registry (passed in as the subjects.json document, or built
+in memory), the schema files (for attached comments), decisions.yaml
 and policy.yaml (`lint:` thresholds, and per rule a severity and the suggested
 verdict, which must be one verdicts.yaml allows for a kind the finding names).
 Writes `<out>/findings/schema_lint.json`:
@@ -54,10 +55,10 @@ def word_in(word, label):
 
 
 class Linter:
-    def __init__(self, wb):
+    def __init__(self, wb, data):
+        """`data` is the subjects.json document (`subjects.document(wb)[0]`)."""
         self.wb = wb
         cfg = wb.cfg
-        data = json.loads(cfg.output("subjects.json").read_text())
         self.fingerprint = data["schema_fingerprint"]
         self.all = list(data["subjects"].values())
         self.subjects = [s for s in self.all if not s.get("retired")]
@@ -326,9 +327,24 @@ def comments(path):
         yield i + 1, comment, below
 
 
-def render(wb):
-    data = Linter(wb).run()
-    text = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
-    summary = " ".join(f"{r}={n}" for r, n in data["counts"].items() if n) \
+def build(wb, doc=None):
+    """The schema_lint.json document. `doc` is the subjects.json document;
+    built in memory when not given."""
+    if doc is None:
+        from . import subjects
+        doc = json.loads(subjects.dump_json(subjects.document(wb)[0]))
+    return Linter(wb, doc).run()
+
+
+def dump(data):
+    return json.dumps(data, indent=2, ensure_ascii=False) + "\n"
+
+
+def summary(data):
+    return " ".join(f"{r}={n}" for r, n in data["counts"].items() if n) \
         + f" total={len(data['findings'])}"
-    return text, summary
+
+
+def render(wb, doc=None):
+    data = build(wb, doc)
+    return dump(data), summary(data)

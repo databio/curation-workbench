@@ -99,3 +99,54 @@ def pg_engine(pg_url):
         with admin.begin() as conn:
             conn.execute(text(f"DROP SCHEMA {schema} CASCADE"))
         admin.dispose()
+
+
+# ---------------------------------------------------------------- sync tier (plan 4)
+#
+# `sync_env`: a migrated schema (pg_engine), the toy project as a throwaway
+# git repo served over file://, a hosted project row, and worker settings in
+# test mode (file:// allowed, sync dir under tmp_path). `sync_worker` runs
+# runner jobs in this process (no isolation; tests only).
+
+@pytest.fixture
+def sync_env(pg_engine, tmp_path):
+    from types import SimpleNamespace
+
+    from synctools import make_repo
+
+    from curation_workbench.hosted.sync.settings import SyncSettings
+    from curation_workbench.store.pg import PgStore, projects
+
+    settings = SyncSettings(sync_dir=tmp_path / "sync", allow_file_repos=True, tick_seconds=0,
+                            checks_debounce_seconds=0)
+    origin = make_repo(tmp_path / "origin")
+    proj = projects.create_project(pg_engine, "toy", "Toy")
+    return SimpleNamespace(engine=pg_engine, settings=settings, origin=origin, project=proj,
+                           url=f"file://{origin}", store=PgStore(pg_engine, proj["id"]))
+
+
+class CountingRunner:
+    """A LocalRunner that runs jobs in-process and counts them."""
+
+    def __init__(self):
+        from curation_workbench import runner
+        from curation_workbench.hosted.sync.remote import LocalRunner
+        self.inner = LocalRunner(run_fn=runner.in_process_runner)
+        self.calls = []
+        self.fail = None
+
+    def snapshot(self, *a, **k):
+        self.calls.append("snapshot")
+        if self.fail:
+            raise self.fail
+        return self.inner.snapshot(*a, **k)
+
+    def checks(self, *a, **k):
+        self.calls.append("checks")
+        return self.inner.checks(*a, **k)
+
+
+@pytest.fixture
+def sync_worker(sync_env):
+    from curation_workbench.hosted.sync.worker import Worker
+    return Worker(sync_env.engine, sync_env.settings, runner=CountingRunner())

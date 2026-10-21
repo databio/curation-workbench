@@ -5,6 +5,8 @@
     cwb -c workbench.yaml status [--check]       state + queue score per subject
     cwb -c workbench.yaml review [--check]       queue items sorted into review tracks/types
     cwb -c workbench.yaml regen [--check]        subjects, lint, status, review, in order
+    cwb -c workbench.yaml snapshot [--out F]     the commit-phase bundle as JSON (stdout or F)
+    cwb derive --snapshot F --decisions D [--out DIR]   status.json + review.json from a bundle
     cwb -c workbench.yaml apply [--dry-run] [--ids DEC-0001 ...]
     cwb -c workbench.yaml serve [--port 8781]    local decision daemon
 
@@ -13,16 +15,25 @@
     cwb db project add <slug> --name NAME        create a hosted project
     cwb db export --project SLUG --template decisions.yaml -o OUT [--ids H-0001 ...]
 
+    cwb runner [--host H] [--port 8150]          the isolated runner (plugin code runs here only)
+    cwb hosted worker                            the sync worker (needs the hosted extra)
+    cwb hosted resident add|list|show|...        resident projects (superadmin operator)
+    cwb hosted isolation-check                   prove the runner is isolated
+
 Global flags: -c/--config (default ./workbench.yaml), --root (project tree;
 overrides the config), --out (where generated files go; default the curation dir).
-`cwb db` commands need no workbench.yaml; they read CWB_DATABASE_URL (or
-POSTGRES_DB/USER/PASSWORD/HOST/PORT) and need the `postgres` extra.
+`cwb db`, `cwb derive`, `cwb runner` and `cwb hosted` need no workbench.yaml;
+the database commands read CWB_DATABASE_URL (or POSTGRES_DB/USER/PASSWORD/HOST/PORT)
+and need the `postgres` extra.
 """
 import argparse
 import sys
 from pathlib import Path
 
 from .workbench import Workbench
+
+
+NO_WORKBENCH = ("db", "derive", "runner", "hosted")
 
 
 def _write(files, check, label):
@@ -78,12 +89,95 @@ def cmd_review(wb, args):
 
 
 def cmd_regen(wb, args):
-    rc = 0
-    for fn in (cmd_subjects, cmd_lint, cmd_status, cmd_review):
-        rc |= fn(wb, args)
+    """snapshot.build once, then every generated file from it and the decision store."""
+    from . import derive, lint, review, snapshot, status, subjects
+    try:
+        bundle = snapshot.build(wb)
+    except subjects.RegistryError as e:
+        sys.exit(f"SUBJECT REGISTRY FAILED: {e}")
+    up = " (up to date)"
+    files = snapshot.files(wb, bundle)
+    lint_path = wb.cfg.findings_dir / snapshot.LINT_FILE
+    lint_text = files.pop(lint_path)
+    rc = _write(files, args.check, "subjects")
+    line = " ".join(f"{k}={v}" for k, v in bundle["subjects"]["counts"].items())
+    print(f"subjects: {line}" + (up if args.check and not rc else ""))
+    r = _write({lint_path: lint_text}, args.check, "lint")
+    print(f"schema lint: {lint.summary(bundle['lint'])}" + (up if args.check and not r else ""))
+    rc |= r
+    st = derive.status(bundle, wb.store.records())
+    r = _write({wb.cfg.output("status.json"): status.dump(st)}, args.check, "status")
+    print(status.summary(st) + (up if args.check and not r else ""))
+    rc |= r
+    rv = derive.review(bundle, st, wb.store.snapshot().get("next_id"))
+    if rv is None:
+        print("review: no review_types.yaml; skipped")
+    else:
+        r = _write({wb.cfg.output("review.json"): review.dump(rv)}, args.check, "review")
+        print(f"review: {review.summary(rv)}" + (up if args.check and not r else ""))
+        rc |= r
     for fn in wb.regen:
         fn(wb, wb.cfg.out)
     return rc
+
+
+def cmd_snapshot(wb, args):
+    from . import snapshot, subjects
+    try:
+        text = snapshot.dumps(snapshot.build(wb))
+    except subjects.RegistryError as e:
+        sys.exit(f"SUBJECT REGISTRY FAILED: {e}")
+    if args.file:
+        Path(args.file).write_text(text)
+        print(f"snapshot: wrote {args.file}")
+    else:
+        sys.stdout.write(text)
+    return 0
+
+
+def _read_bundle(path):
+    import gzip
+    import json
+
+    from . import snapshot
+    raw = Path(path).read_bytes()
+    if raw[:2] == b"\x1f\x8b":
+        raw = gzip.decompress(raw)
+    return snapshot.check_format(json.loads(raw))
+
+
+def _read_decisions(path):
+    """A JSON list of decision records, or a decisions.yaml."""
+    import json
+    if Path(path).suffix in (".yaml", ".yml"):
+        from .store import YamlStore
+        return YamlStore(Path(path)).records()
+    data = json.loads(Path(path).read_text())
+    if isinstance(data, dict):
+        data = data.get("decisions") or []
+    return data
+
+
+def cmd_derive(_, args):
+    from . import derive, review, status
+    bundle = _read_bundle(args.snapshot)
+    decisions = _read_decisions(args.decisions)
+    out = Path(args.out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    st = derive.status(bundle, decisions)
+    (out / "status.json").write_text(status.dump(st))
+    print(status.summary(st))
+    next_id = max([int(str(d.get("id", "-0")).rsplit("-", 1)[-1] or 0) for d in decisions] + [0]) + 1
+    rv = derive.review(bundle, st, next_id)
+    if rv is not None:
+        (out / "review.json").write_text(review.dump(rv))
+        print(f"review: {review.summary(rv)}")
+    return 0
+
+
+def cmd_runner(_, args):
+    from . import runner
+    return runner.main(["--host", args.host, "--port", str(args.port)])
 
 
 def cmd_apply(wb, args):
@@ -118,7 +212,14 @@ def _engine(pg):
 def _extra_metadata():
     # Plans 2 and 4 register their table metadata here (loaded lazily, only
     # when the `hosted` extra is installed) so the drift check covers every table.
-    return ()
+    out = []
+    try:
+        from .hosted.sync.tables import METADATA as sync_tables
+    except ImportError:
+        pass
+    else:
+        out.append(sync_tables)
+    return tuple(out)
 
 
 def cmd_db_migrate(_, args):
@@ -204,9 +305,24 @@ def main(argv=None):
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8781)
     p.set_defaults(fn=cmd_serve)
+    p = sub.add_parser("snapshot", help="write the commit-phase bundle as JSON")
+    p.add_argument("--out", dest="file", help="write the bundle here instead of stdout")
+    p.set_defaults(fn=cmd_snapshot)
+    p = sub.add_parser("derive", help="status.json and review.json from a bundle and decisions")
+    p.add_argument("--snapshot", required=True, help="bundle JSON (from `cwb snapshot`; may be gzip)")
+    p.add_argument("--decisions", required=True,
+                   help="JSON list of decision records, or a decisions.yaml")
+    p.add_argument("--out", dest="out_dir", default=".", help="folder to write to (default: here)")
+    p.set_defaults(fn=cmd_derive)
+    p = sub.add_parser("runner", help="the isolated runner (HTTP, one job at a time)")
+    p.add_argument("--host", default="0.0.0.0")
+    p.add_argument("--port", type=int, default=8150)
+    p.set_defaults(fn=cmd_runner)
     _db_parser(sub)
+    from .hosted.sync import cli as sync_cli
+    sync_cli.add_parser(sub)
     args = ap.parse_args(argv)
-    if args.cmd == "db":
+    if args.cmd in NO_WORKBENCH:
         return args.fn(None, args) or 0
     wb = Workbench.open(Path(args.config), out=args.out, root=args.root)
     return args.fn(wb, args) or 0

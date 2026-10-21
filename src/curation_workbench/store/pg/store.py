@@ -138,6 +138,16 @@ class PgStore:
                 self._tx = None
 
     @contextlib.contextmanager
+    def using(self, conn):
+        """Run every method on this instance on `conn`, a transaction the caller
+        already holds (e.g. plan 4's publish), until the block ends."""
+        prev, self._tx = self._tx, conn
+        try:
+            yield conn
+        finally:
+            self._tx = prev
+
+    @contextlib.contextmanager
     def _conn(self):
         """The open transaction() connection, or a fresh transaction of our own.
         No raw IntegrityError escapes."""
@@ -414,22 +424,33 @@ class PgStore:
 
     # ------------------------------------------------------------ staleness (plan 4's worker)
 
+    @staticmethod
+    def _marks(r) -> dict:
+        return {"stale": r.stale_since_snapshot_id is not None,
+                "stale_since_snapshot_id": r.stale_since_snapshot_id,
+                "stale_reason": r.stale_reason, "stale_new_sid": r.stale_new_sid}
+
     def open_votes(self) -> list[dict]:
-        """Every vote in the project: [{id, subject, subject_hash}]."""
+        """Every vote in the project: [{id, subject, subject_hash, stale,
+        stale_since_snapshot_id, stale_reason, stale_new_sid}]."""
         with self._conn() as conn:
-            return [{"id": r.id, "subject": r.subject, "subject_hash": r.subject_hash}
-                    for r in conn.execute(select(votes.c.id, votes.c.subject, votes.c.subject_hash)
-                                          .where(votes.c.project_id == self.project_id)
-                                          .order_by(votes.c.id))]
+            q = (select(votes.c.id, votes.c.subject, votes.c.subject_hash,
+                        votes.c.stale_since_snapshot_id, votes.c.stale_reason, votes.c.stale_new_sid)
+                 .where(votes.c.project_id == self.project_id).order_by(votes.c.id))
+            return [{"id": r.id, "subject": r.subject, "subject_hash": r.subject_hash,
+                     **self._marks(r)} for r in conn.execute(q)]
 
     def pending_decisions(self) -> list[dict]:
-        """Pending hosted decisions: [{id, dec_id, subject_hashes}]."""
+        """Pending hosted decisions: [{id, dec_id, subject_hashes, stale,
+        stale_since_snapshot_id, stale_reason, stale_new_sid}]."""
         with self._conn() as conn:
-            q = (select(decisions.c.id, decisions.c.dec_id, decisions.c.subject_hashes)
+            q = (select(decisions.c.id, decisions.c.dec_id, decisions.c.subject_hashes,
+                        decisions.c.stale_since_snapshot_id, decisions.c.stale_reason,
+                        decisions.c.stale_new_sid)
                  .where(decisions.c.project_id == self.project_id, decisions.c.status == "pending")
                  .order_by(decisions.c.id))
-            return [{"id": r.id, "dec_id": r.dec_id, "subject_hashes": r.subject_hashes}
-                    for r in conn.execute(q)]
+            return [{"id": r.id, "dec_id": r.dec_id, "subject_hashes": r.subject_hashes,
+                     **self._marks(r)} for r in conn.execute(q)]
 
     def _stale(self, kind, row_id, values):
         table = STALE_KINDS.get(kind)

@@ -55,6 +55,19 @@ def project(pg_engine):
 
 
 @pytest.fixture
+def snap(project):
+    """A real cw_snapshots id (040 adds the stale columns' foreign key to it)."""
+    with project.engine.begin() as conn:
+        rid = conn.execute(text("INSERT INTO cw_residents (project_id, repo_url, branch) "
+                                "VALUES (:p, 'dev:/x', 'dev') RETURNING id"),
+                           {"p": project.project_id}).scalar_one()
+        return conn.execute(text("INSERT INTO cw_snapshots (resident_id, commit_sha, "
+                                 "schema_fingerprint, bundle, bundle_sha256) "
+                                 "VALUES (:r, 'c', 'f', '\\x00', 'h') RETURNING id"),
+                            {"r": rid}).scalar_one()
+
+
+@pytest.fixture
 def ctx(toy):  # noqa: F811
     c = toy_ctx(toy)
     c.review_types = REVIEW_TYPES
@@ -73,7 +86,7 @@ def vote(ctx, sid="term:TOY_0001", review_type="vocabulary/links", answer="keep"
 def test_migrations(pg_engine):
     files = [p.name for p in migrate.migration_files()]
     assert files == ["010_projects.sql", "011_decisions.sql", "012_votes.sql",
-                     "013_decision_votes.sql"]
+                     "013_decision_votes.sql", "040_residents_sync.sql"]
     with pg_engine.connect() as conn:
         ledger = sorted(r[0] for r in conn.execute(text("SELECT filename FROM schema_migrations")))
     assert ledger == files
@@ -208,9 +221,9 @@ def test_transaction_commits(project, ctx):
 
 # ---------------------------------------------------------------- votes
 
-def test_one_vote_per_person(project, ctx):
+def test_one_vote_per_person(project, ctx, snap):
     v1 = project.cast_vote(vote(ctx), ctx, user_id=1)
-    project.set_stale("vote", v1["id"], 5, "subject_changed")
+    project.set_stale("vote", v1["id"], snap, "subject_changed")
     assert project.votes()[0]["stale"] is True
     v2 = project.cast_vote(vote(ctx, answer="no-match", comment="changed my mind"), ctx, user_id=1)
     assert v2["id"] == v1["id"] and v2["rev"] == 2
@@ -249,23 +262,28 @@ def test_subject_vote_with_proposal(project, ctx):
     assert v["proposal"]["operation"]["description"] == "Red."
 
 
-def test_stale_marks(project, ctx):
+def test_stale_marks(project, ctx, snap):
     v = project.cast_vote(vote(ctx), ctx, user_id=1)
     d = project.create(draft(ctx), ctx)
+    unmarked = {"stale": False, "stale_since_snapshot_id": None, "stale_reason": None,
+                "stale_new_sid": None}
     assert project.open_votes() == [{"id": v["id"], "subject": "term:TOY_0001",
-                                     "subject_hash": v["subject_hash"]}]
+                                     "subject_hash": v["subject_hash"], **unmarked}]
     pend = project.pending_decisions()
     assert [p["dec_id"] for p in pend] == ["H-0001"]
     rev = project.decisions_rev()
-    project.set_stale("vote", v["id"], 9, "renamed", new_sid="term:TOY_0009")
-    project.set_stale("decision", pend[0]["id"], 9, "subject_changed")
+    project.set_stale("vote", v["id"], snap, "renamed", new_sid="term:TOY_0009")
+    project.set_stale("decision", pend[0]["id"], snap, "subject_changed")
+    assert project.open_votes()[0]["stale_since_snapshot_id"] == snap
     assert project.decisions_rev() == rev          # marks do not bump the token
     got = project.votes()[0]
     assert (got["stale"], got["stale_reason"], got["stale_new_sid"]) == (True, "renamed", "term:TOY_0009")
     rec = project.get(d["id"])
     assert (rec["stale"], rec["stale_reason"]) == (True, "subject_changed")
     with pytest.raises(store.StoreError):
-        project.set_stale("vote", v["id"], 9, "bogus")
+        project.set_stale("vote", v["id"], snap, "bogus")
+    with pytest.raises(store.StoreError):          # 040: the snapshot must exist
+        project.set_stale("vote", v["id"], snap + 1000, "renamed")
     project.clear_stale("vote", v["id"])
     project.clear_stale("decision", pend[0]["id"])
     assert project.votes()[0]["stale"] is False and project.get(d["id"])["stale"] is False
