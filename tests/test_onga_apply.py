@@ -88,7 +88,7 @@ def decisions(scratch):
     path = wb.cfg.decisions
     original = path.read_text()
     subjects = apply.fresh_subjects(wb)
-    verdicts = store.load_verdicts(wb.cfg.verdicts)
+    ctx = store.ValidationContext(subjects=subjects, verdicts=store.load_verdicts(wb.cfg.verdicts), wb=wb)
     ids = []
     try:
         for sid, verdict, op in battery(subjects.by_sid):
@@ -100,7 +100,7 @@ def decisions(scratch):
                    "also_affects": also,
                    "subject_hashes": {s: subjects.get(s)["hash"] for s in [sid, *also]}}
             try:
-                ids.append(store.create(rec, subjects, verdicts, path, wb=wb)["id"])
+                ids.append(wb.store.create(rec, ctx)["id"])
             except store.StoreError:
                 pass  # refused at record time (e.g. promote_tier before tiers exist)
         yield wb, ids

@@ -87,18 +87,21 @@ def cases(subjects):
 def test_validate_matches(env, onga):
     old, wb, (so, vo), (sn, vn) = env
     doc_old = old.load(onga / "curation" / "decisions.yaml")
-    doc_new = store.load(wb.cfg.decisions)
+    stored = wb.store.records()
+    known_new = {r["id"] for r in stored}
     recs = cases(sn)
     # Every stored decision, re-validated without the hash check, too.
-    recs += [r for r in store.plain_records(wb.cfg.decisions)]
+    recs += stored
     for rec in recs:
         r = copy.deepcopy(rec)
         if isinstance(r.get("decided_on"), str):
             r["decided_on"] = datetime.date.fromisoformat(r["decided_on"])
         a = outcome(lambda: old.validate(copy.deepcopy(r), so, vo, doc=doc_old,
                                          check_hashes=r["status"] == "pending"))
-        b = outcome(lambda: store.validate(copy.deepcopy(r), sn, vn, doc=doc_new,
+        b = outcome(lambda: store.validate(copy.deepcopy(r), sn, vn, known_ids=known_new,
                                            check_hashes=r["status"] == "pending", wb=wb))
+        # The one planned vocabulary change: "hosted" is a new origin kind.
+        b = (b[0], tuple(e.replace(", 'hosted']", "]") for e in b[1])) if len(b) > 1 else b
         assert a == b, (r["id"], r["subject"], r["verdict"], a, b)
 
 
@@ -112,13 +115,15 @@ def test_writes_match(env, onga, tmp_path):
              "decided_on": "2026-10-21", "subject_hashes": {term: sn.get(term)["hash"]},
              "evidence": [{"kind": "finding", "id": "lint:x"}]}
     a = old.create(copy.deepcopy(draft), so, vo, path=pa)
-    b = store.create(copy.deepcopy(draft), sn, vn, pb, wb=wb)
+    new = store.YamlStore(pb)
+    ctx = store.ValidationContext(subjects=sn, verdicts=vn, wb=wb)
+    b = new.create(copy.deepcopy(draft), ctx)
     assert a == b
     assert pa.read_text() == pb.read_text()
     edit = {**a, "rationale": "changed"}
     old.update(a["id"], copy.deepcopy(edit), so, vo, path=pa)
-    store.update(b["id"], copy.deepcopy(edit), sn, vn, pb, wb=wb)
+    new.update(b["id"], copy.deepcopy(edit), ctx)
     assert pa.read_text() == pb.read_text()
     old.withdraw(a["id"], path=pa)
-    store.withdraw(b["id"], pb)
+    new.withdraw(b["id"])
     assert pa.read_text() == pb.read_text()

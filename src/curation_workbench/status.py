@@ -33,7 +33,7 @@ from pathlib import Path
 
 import yaml
 
-from .store import load_verdicts, plain_records
+from .store import load_verdicts
 
 STATES = ("unreviewed", "open", "deferred", "settled", "applied", "stale")
 QUEUE_STATES = ("open", "stale", "unreviewed")
@@ -99,7 +99,7 @@ def build(wb):
     findings, sources = load_findings(wb, fingerprint, spol.get("finding_severity") or {})
 
     # Decisions per subject, oldest first.
-    decs = plain_records(cfg.decisions)
+    decs = wb.store.records()
     by_subject = defaultdict(list)
     for d in decs:
         if d.get("status") == "withdrawn":

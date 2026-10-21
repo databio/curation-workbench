@@ -56,3 +56,46 @@ def same_json(a_text, b_text):
 
 def strip_generated(text):
     return "\n".join(ln for ln in text.splitlines() if '"_generated_by"' not in ln)
+
+
+# ---------------------------------------------------------------- postgres tier
+#
+# `pg_engine` gives each test a fresh schema in the database named by
+# CWB_TEST_POSTGRES_URL (scripts/test-postgres.sh starts a throwaway container),
+# with migrations applied by the real runner. Skips when the URL is unset.
+
+TEST_PG_ENV = "CWB_TEST_POSTGRES_URL"
+
+
+@pytest.fixture(scope="session")
+def pg_url():
+    url = os.environ.get(TEST_PG_ENV)
+    if not url:
+        pytest.skip(f"set {TEST_PG_ENV} (scripts/test-postgres.sh) for postgres tests")
+    pytest.importorskip("sqlalchemy")
+    pytest.importorskip("psycopg")
+    return url
+
+
+@pytest.fixture
+def pg_engine(pg_url):
+    import uuid
+
+    from sqlalchemy import text
+
+    from curation_workbench.store.pg import make_engine, migrate
+
+    schema = f"t_{uuid.uuid4().hex[:12]}"
+    admin = make_engine(pg_url)
+    with admin.begin() as conn:
+        conn.execute(text(f"CREATE SCHEMA {schema}"))
+    eng = make_engine(pg_url, connect_args={"options": f"-csearch_path={schema}"})
+    eng.info_schema = schema
+    try:
+        migrate.migrate(eng)
+        yield eng
+    finally:
+        eng.dispose()
+        with admin.begin() as conn:
+            conn.execute(text(f"DROP SCHEMA {schema} CASCADE"))
+        admin.dispose()

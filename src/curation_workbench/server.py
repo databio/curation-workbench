@@ -22,11 +22,12 @@ fn(api, tail) handles the request (a prefix ending in "/" passes the rest of
 the path as `tail`); `api.workbench` is the Workbench, and `api.json_body()`,
 `api.send(code, body)` and `store.StoreError` work as in the builtin routes.
 
-Every decision write goes through store.py (`validate` is the one gate).
-Errors are `{"errors": [...]}` with 400 (malformed), 404 (unknown id) or 409
-(conflict). Optimistic concurrency: a mutating request may send the
-`X-Store-Mtime` header with the `mtime_ns` it last read; if the file changed
-since, the daemon answers 409 with the current store.
+Every decision write goes through the workbench's store (`wb.store`, a
+YamlStore here; `store.validate` is the one gate). Errors are
+`{"errors": [...]}` with 400 (malformed), 404 (unknown id) or 409 (conflict).
+Optimistic concurrency: a mutating request may send the `X-Store-Mtime` header
+with the `mtime_ns` it last read; the store compares it under its lock and, if
+the file changed since, the daemon answers 409 with the current store.
 
 The server sets `decided_by` (git config user.name), `decided_on`,
 `schema_fingerprint`, `status: pending` and `origin: local`; the browser
@@ -46,6 +47,7 @@ from urllib.parse import urlparse
 import yaml
 
 from . import store
+from .store.yaml_store import LOCK
 
 SERVER_FIELDS = ("id", "decided_by", "decided_on", "schema_fingerprint", "status", "applied", "origin")
 DEFAULT_ORIGINS = [f"http://{h}:{p}" for h in ("localhost", "127.0.0.1") for p in range(4321, 4330)]
@@ -73,6 +75,9 @@ def make_handler(wb, decided_by):
     def verdicts():
         return store.load_verdicts(cfg.verdicts)
 
+    def context(subj):
+        return store.ValidationContext(subjects=subj, verdicts=verdicts(), wb=wb)
+
     class Api(BaseHTTPRequestHandler):
         server_version = "curation-workbench/1"
         workbench = wb
@@ -97,7 +102,7 @@ def make_handler(wb, decided_by):
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(data)))
             if cfg.decisions.exists():
-                self.send_header("X-Store-Mtime", str(store.mtime_ns(cfg.decisions)))
+                self.send_header("X-Store-Mtime", wb.store.token())
             self.end_headers()
             self.wfile.write(data)
 
@@ -126,14 +131,11 @@ def make_handler(wb, decided_by):
                 return False
             return True
 
-        def _check_mtime(self):
-            sent = self.headers.get("X-Store-Mtime")
-            if sent is not None and sent != str(store.mtime_ns(cfg.decisions)):
-                raise store.StoreError(409, ["decisions.yaml changed since it was read; reload"])
+        def _token(self):
+            return self.headers.get("X-Store-Mtime")
 
         def _store_json(self):
-            doc = store.load(cfg.decisions)
-            return {**store.to_plain(dict(doc.data)), "mtime_ns": store.mtime_ns(cfg.decisions)}
+            return wb.store.snapshot()
 
         def _dispatch(self, routes):
             if not self._guard():
@@ -144,7 +146,7 @@ def make_handler(wb, decided_by):
             for prefix, fn in routes:
                 if path == prefix or (prefix.endswith("/") and path.startswith(prefix)):
                     try:
-                        with store.LOCK if self.command != "GET" else contextlib.nullcontext():
+                        with LOCK if self.command != "GET" else contextlib.nullcontext():
                             return fn(path[len(prefix):] if prefix.endswith("/") else None)
                     except store.StoreError as e:
                         extra = {"store": self._store_json()} if e.status == 409 else {}
@@ -199,7 +201,7 @@ def make_handler(wb, decided_by):
                 "repo_root": str(cfg.root),
                 "git_branch": git("rev-parse", "--abbrev-ref", "HEAD"),
                 "schema_fingerprint": subjects().fingerprint,
-                "decision_count": len(store.records(cfg.decisions)),
+                "decision_count": len(wb.store.records()),
                 "working_tree_dirty": bool(git("status", "--porcelain")),
                 "decided_by": decided_by,
                 "apply_available": True,
@@ -218,31 +220,26 @@ def make_handler(wb, decided_by):
             return body
 
         def create(self, _):
-            self._check_mtime()
             rec = self._client_record()
             rec["decided_by"] = decided_by
             rec["origin"] = {"kind": "local", "ref": None}
             subj = subjects()
             rec["schema_fingerprint"] = subj.fingerprint
-            out = store.create(rec, subj, verdicts(), cfg.decisions, wb=wb)
+            out = wb.store.create(rec, context(subj), expect_token=self._token())
             self.send(201, {"decision": out})
 
         def update(self, dec_id):
-            self._check_mtime()
-            _, cur = store.find(store.load(cfg.decisions), dec_id)
-            if cur["status"] != "pending":
-                raise store.StoreError(400, [f"{dec_id} is {cur['status']}; only pending records can change"])
+            cur = wb.store.get(dec_id)
             rec = self._client_record()
             subj = subjects()
             rec.update(id=dec_id, decided_by=decided_by, status="pending",
                        decided_on=datetime.date.today().isoformat(),
-                       origin=store.to_plain(cur["origin"]), schema_fingerprint=subj.fingerprint)
-            out = store.update(dec_id, rec, subj, verdicts(), cfg.decisions, wb=wb)
+                       origin=cur["origin"], schema_fingerprint=subj.fingerprint)
+            out = wb.store.update(dec_id, rec, context(subj), expect_token=self._token())
             self.send(200, {"decision": out})
 
         def withdraw(self, dec_id):
-            self._check_mtime()
-            self.send(200, {"decision": store.withdraw(dec_id, cfg.decisions)})
+            self.send(200, {"decision": wb.store.withdraw(dec_id, expect_token=self._token())})
 
         def apply(self, _):
             body = self.json_body()

@@ -1,30 +1,34 @@
-"""The decision store: `<curation>/decisions.yaml`.
+"""Decision and vote validation, shared by every store backend.
 
-Every read and write goes through `yamlio`, so the documented header and the
-file's style survive. `create` / `update` / `withdraw` take one module-level
-lock and do a full read-modify-write; the daemon adds optimistic concurrency on
-top by comparing the file's `mtime_ns` (see `mtime_ns()`).
+Nothing here touches a file or a database. `validate` is the one gate every
+decision write goes through (YAML or Postgres); `validate_vote` is the gate for
+votes. Neither backend adds rules of its own.
 
-Validation (`validate`) is the one gate every writer uses. It reads the verdict
-vocabulary from `verdicts.yaml` and the subject registry from `subjects.json`;
-nothing here hard-codes a verdict or a kind. Project rules reach it through the
-workbench hooks `operation_checks` and `record_checks` (pass `wb=`).
+The verdict vocabulary comes from `verdicts.yaml` and the subject registry from
+`subjects.json`; nothing here hard-codes a verdict or a kind. Project rules
+reach validation through the workbench hooks `operation_checks` and
+`record_checks` (pass `wb=`).
 """
 import copy
 import datetime
 import json
 import re
-import threading
 from pathlib import Path
 
-from ruamel.yaml.comments import CommentedMap, CommentedSeq
-
-from . import yamlio
+from .. import yamlio
 
 STATUSES = ("pending", "applied", "withdrawn")
-ORIGINS = ("local", "seed", "github_issue", "github_pr")
+ORIGINS = ("local", "seed", "github_issue", "github_pr", "hosted")
 EVIDENCE_KINDS = ("finding", "usage", "issue", "pr", "doc", "other")
-ID_RE = re.compile(r"^DEC-\d{4,}$")
+# DEC-NNNN: minted by the YAML store (the repo's own sequence).
+# H-NNNN: minted by the hosted (Postgres) store, per project.
+ID_RE = re.compile(r"^(DEC|H)-\d{4,}$")
+HOSTED_ID_RE = re.compile(r"^H-\d{4,}$")
+STALE_REASONS = ("subject_changed", "renamed", "subject_removed")
+ANSWER_RE = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,63}$")
+PROPOSAL_KEYS = ("verdict", "operation", "rationale", "also_affects", "evidence")
+VOTE_KEYS = ("subject", "review_type", "answer", "proposal", "comment", "subject_hash",
+             "schema_fingerprint")
 
 # Field order of a record as written to the store.
 FIELDS = (
@@ -33,17 +37,17 @@ FIELDS = (
     "schema_fingerprint", "status", "applied", "supersedes", "origin",
 )
 
-LOCK = threading.RLock()
-
 
 class StoreError(Exception):
-    """A rejected write. `status` is the HTTP code the daemon returns:
+    """A rejected write. `status` is the HTTP code a server returns:
     400 for a malformed record, 404 for an unknown id, 409 for a conflict
-    (a subject changed since the client read it)."""
+    (a subject changed since the client read it, or a stale version token).
+    `current` carries the current record when a revision check failed."""
 
-    def __init__(self, status, errors):
+    def __init__(self, status, errors, current=None):
         self.status = status
         self.errors = list(errors)
+        self.current = current
         super().__init__("; ".join(self.errors))
 
 
@@ -70,41 +74,6 @@ class Subjects:
         return self.by_sid.get(sid)
 
 
-# ---------------------------------------------------------------- store io
-
-def load(path):
-    """The store as a yamlio.Doc (`.data` has version, next_id, decisions).
-    The store always spells nulls out (`supersedes: null`)."""
-    doc = yamlio.load(path)
-    doc.nulls = True
-    return doc
-
-
-def mtime_ns(path):
-    return Path(path).stat().st_mtime_ns
-
-
-def records(path):
-    return list(load(path).data["decisions"])
-
-
-def plain_records(path):
-    """The records as plain JSON-safe dicts (dates as YYYY-MM-DD strings).
-
-    Read the store through here, not PyYAML: YAML 1.1 loaders turn the
-    `applied.on` key into the boolean True."""
-    if not Path(path).exists():
-        return []
-    return [to_plain(r) for r in records(path)]
-
-
-def find(doc, dec_id):
-    for i, rec in enumerate(doc.data["decisions"]):
-        if rec["id"] == dec_id:
-            return i, rec
-    raise StoreError(404, [f"no decision {dec_id}"])
-
-
 def to_plain(obj):
     """ruamel/date values -> JSON-safe plain Python."""
     if isinstance(obj, dict):
@@ -116,29 +85,7 @@ def to_plain(obj):
     return obj
 
 
-def _to_yaml(obj):
-    """Plain Python -> ruamel nodes, block style, record fields in order."""
-    if isinstance(obj, dict):
-        m = CommentedMap()
-        keys = [k for k in FIELDS if k in obj] + [k for k in obj if k not in FIELDS]
-        for k in keys:
-            m[k] = _to_yaml(obj[k])
-        return m
-    if isinstance(obj, (list, tuple)):
-        s = CommentedSeq(_to_yaml(v) for v in obj)
-        if not s or all(not isinstance(v, (dict, list)) for v in s):
-            s.fa.set_flow_style()
-        return s
-    return obj
-
-
-def _decisions_seq(doc):
-    seq = doc.data["decisions"]
-    seq.fa.set_block_style()
-    return seq
-
-
-def _normalize(rec):
+def normalize(rec):
     """Fill defaults for the optional parts of a record (plain dict in, out)."""
     rec = copy.deepcopy(to_plain(rec))
     rec.setdefault("also_affects", [])
@@ -157,45 +104,18 @@ def _normalize(rec):
     return rec
 
 
-def create(rec, subjects, verdicts, path, wb=None):
-    """Validate and append `rec`; mint its id from `next_id`. Returns the record."""
-    with LOCK:
-        doc = load(path)
-        rec = _normalize(rec)
-        rec["id"] = f"DEC-{int(doc.data['next_id']):04d}"
-        rec.setdefault("decided_on", datetime.date.today())
-        rec.setdefault("schema_fingerprint", subjects.fingerprint)
-        validate(rec, subjects, verdicts, doc=doc, wb=wb)
-        _decisions_seq(doc).append(_to_yaml(rec))
-        doc.data["next_id"] = int(doc.data["next_id"]) + 1
-        yamlio.dump(doc, path)
-        return to_plain(rec)
+# ---------------------------------------------------------------- state rules
+
+def check_updatable(current):
+    """Only pending records can change."""
+    if current["status"] != "pending":
+        raise StoreError(400, [f"{current['id']} is {current['status']}; only pending records can change"])
 
 
-def update(dec_id, rec, subjects, verdicts, path, check_hashes=True, wb=None):
-    """Validate and replace record `dec_id` with `rec` (whose id must match)."""
-    with LOCK:
-        doc = load(path)
-        i, _ = find(doc, dec_id)
-        rec = _normalize(rec)
-        if rec.setdefault("id", dec_id) != dec_id:
-            raise StoreError(400, [f"record id {rec['id']} does not match {dec_id}"])
-        validate(rec, subjects, verdicts, doc=doc, check_hashes=check_hashes, wb=wb)
-        _decisions_seq(doc)[i] = _to_yaml(rec)
-        yamlio.dump(doc, path)
-        return to_plain(rec)
-
-
-def withdraw(dec_id, path):
-    """Set `status: withdrawn`. Records are never removed."""
-    with LOCK:
-        doc = load(path)
-        _, rec = find(doc, dec_id)
-        if rec["status"] == "applied":
-            raise StoreError(400, [f"{dec_id} is applied; record a superseding decision instead"])
-        rec["status"] = "withdrawn"
-        yamlio.dump(doc, path)
-        return to_plain(rec)
+def check_withdrawable(current):
+    """Applied records are never withdrawn (supersede them instead)."""
+    if current["status"] == "applied":
+        raise StoreError(400, [f"{current['id']} is applied; record a superseding decision instead"])
 
 
 # ---------------------------------------------------------------- validation
@@ -295,13 +215,27 @@ def check_operation(verdict, entry, op, subjects, wb=None):
     return errors, sids
 
 
-def validate(rec, subjects, verdicts, doc=None, check_hashes=True, wb=None):
+def _check_hosted_origin(dec_id, origin, errors):
+    """A hosted record carries its own H- id in origin.ref; once exported into a
+    repo file it has a DEC- id and origin.ref keeps the H- id it came from."""
+    ref = origin.get("ref")
+    if not isinstance(dec_id, str):
+        return
+    if dec_id.startswith("H-"):
+        if ref != dec_id:
+            errors.append(f"origin.ref of hosted decision {dec_id} must be {dec_id}")
+    elif not (isinstance(ref, str) and HOSTED_ID_RE.match(ref)):
+        errors.append("origin.ref of an exported hosted decision must be its H- id")
+
+
+def validate(rec, subjects, verdicts, known_ids=None, check_hashes=True, wb=None):
     """Raise StoreError unless `rec` may be written.
 
     400 for any structural problem; 409 when the record is otherwise fine but a
     `subject_hashes` entry no longer matches the registry (the subject changed
-    since the client read it). `check_hashes=False` is for the apply engine,
-    which re-stamps hashes itself.
+    since the client read it). `known_ids` is the set of decision ids that
+    `supersedes` may name. `check_hashes=False` is for the apply engine, which
+    re-stamps hashes itself.
     """
     errors, conflicts = [], []
 
@@ -332,6 +266,10 @@ def validate(rec, subjects, verdicts, doc=None, check_hashes=True, wb=None):
         errors.append(f"origin.kind must be one of {list(ORIGINS)}")
     elif entry.get("seed_only") and origin["kind"] != "seed":
         errors.append(f"verdict {verdict} is historical and only the seed may record it")
+    elif origin["kind"] == "hosted":
+        _check_hosted_origin(dec_id, origin, errors)
+    elif isinstance(dec_id, str) and dec_id.startswith("H-"):
+        errors.append(f"{dec_id} is a hosted id; origin.kind must be hosted")
 
     record_only = entry["writes"] == "none"
     if subj.get("retired") and not record_only:
@@ -372,8 +310,7 @@ def validate(rec, subjects, verdicts, doc=None, check_hashes=True, wb=None):
 
     sup = rec.get("supersedes")
     if sup is not None:
-        known = {r["id"] for r in (doc.data["decisions"] if doc is not None else [])}
-        if sup not in known or sup == dec_id:
+        if sup not in (known_ids or set()) or sup == dec_id:
             errors.append(f"supersedes: no earlier decision {sup!r}")
 
     hashes = rec.get("subject_hashes")
@@ -395,3 +332,104 @@ def validate(rec, subjects, verdicts, doc=None, check_hashes=True, wb=None):
         raise StoreError(400, errors)
     if conflicts:
         raise StoreError(409, conflicts)
+
+
+# ---------------------------------------------------------------- votes
+
+def _review_type_kinds(review_types, name):
+    """The subject kinds review type `track/type` covers, or None if it does not exist."""
+    track_id, _, type_id = name.partition("/")
+    for track in (review_types or {}).get("tracks") or []:
+        if track.get("id") != track_id:
+            continue
+        if any(t.get("id") == type_id for t in track.get("types") or []):
+            return list(track.get("kinds") or [])
+    return None
+
+
+def validate_vote(vote, ctx):
+    """Raise StoreError unless `vote` may be recorded; return it normalized.
+
+    `vote` is {subject, review_type, answer, proposal?, comment?, subject_hash}
+    (plus an optional schema_fingerprint the caller sets). 400 for a malformed
+    vote; 409 when `subject_hash` is not the subject's current hash, so a vote is
+    never recorded against a version the voter did not see.
+    """
+    if not isinstance(vote, dict):
+        raise StoreError(400, ["a vote must be a mapping"])
+    errors = [f"{k} is not a field of a vote" for k in vote if k not in VOTE_KEYS]
+    subjects, verdicts = ctx.subjects, ctx.verdicts
+
+    sid = vote.get("subject")
+    subj = subjects.get(sid) if isinstance(sid, str) else None
+    if subj is None:
+        raise StoreError(400, errors + [f"unknown subject {sid!r}"])
+    if subj.get("retired"):
+        errors.append(f"{sid} is retired")
+    kind = subj["kind"]
+
+    rt = vote.get("review_type")
+    if rt != "subject":
+        kinds = _review_type_kinds(ctx.review_types, rt) if isinstance(rt, str) else None
+        if kinds is None:
+            errors.append(f"unknown review type {rt!r}")
+        elif kind not in kinds:
+            errors.append(f"{sid} is a {kind}; review type {rt} covers {kinds}")
+
+    answer = vote.get("answer")
+    if not isinstance(answer, str) or not ANSWER_RE.match(answer):
+        errors.append(f"answer must match {ANSWER_RE.pattern}, got {answer!r}")
+
+    proposal = vote.get("proposal")
+    if proposal is not None:
+        if not isinstance(proposal, dict):
+            errors.append("proposal must be a mapping")
+            proposal = None
+        else:
+            proposal = to_plain(proposal)
+            errors += [f"proposal.{k} is not a field of a proposal"
+                       for k in proposal if k not in PROPOSAL_KEYS]
+            pv = proposal.get("verdict")
+            entry = verdicts.get(kind, {}).get(pv)
+            if entry is None:
+                errors.append(f"proposal.verdict {pv!r} is not allowed for a {kind}; "
+                              f"allowed: {sorted(verdicts.get(kind, {}))}")
+            else:
+                op_errors, _ = check_operation(pv, entry, proposal.get("operation"), subjects, wb=ctx.wb)
+                errors += [f"proposal: {e}" for e in op_errors]
+            if "rationale" in proposal and not isinstance(proposal["rationale"], str):
+                errors.append("proposal.rationale must be a string")
+            also = proposal.get("also_affects", [])
+            if not isinstance(also, list):
+                errors.append("proposal.also_affects must be a list of subject ids")
+            else:
+                for other in also:
+                    if subjects.get(other) is None:
+                        errors.append(f"proposal.also_affects: unknown subject {other!r}")
+                    elif other == sid:
+                        errors.append("proposal.also_affects must not repeat the subject")
+            ev = proposal.get("evidence", [])
+            if not isinstance(ev, list) or not all(
+                    isinstance(e, dict) and e.get("kind") in EVIDENCE_KINDS for e in ev):
+                errors.append(f"proposal.evidence must be a list of {{kind, id?, detail?}}, "
+                              f"kind in {list(EVIDENCE_KINDS)}")
+    if rt == "subject" and (proposal is None or proposal.get("verdict") != answer):
+        errors.append("a vote on the subject itself needs a proposal whose verdict is the answer")
+
+    comment = vote.get("comment", "")
+    if comment is None:
+        comment = ""
+    if not isinstance(comment, str):
+        errors.append("comment must be a string")
+
+    h = vote.get("subject_hash")
+    if not _is_str(h):
+        errors.append("subject_hash is required")
+    if errors:
+        raise StoreError(400, errors)
+    if h != subj["hash"]:
+        raise StoreError(409, [f"{sid} changed since it was read (recorded {h}, current {subj['hash']})"])
+
+    return {"subject": sid, "review_type": rt, "answer": answer, "proposal": proposal,
+            "comment": comment, "subject_hash": h,
+            "schema_fingerprint": vote.get("schema_fingerprint") or subjects.fingerprint}

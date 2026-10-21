@@ -46,16 +46,21 @@ class Workbench:
         self.regen = []            # (wb, out_dir) -> None, extra generators run by `cwb regen`
         self.routes = []           # (method, prefix, fn(api, tail)) extra daemon routes
         self.plugins = []
+        from .store import YamlStore
+        self.store = YamlStore(cfg.decisions)   # decision store; the hosted app passes a PgStore
 
     @classmethod
-    def open(cls, config_path, out=None, root=None, plugins=True):
+    def open(cls, config_path, out=None, root=None, plugins=True, store=None):
         """Load a project. `root` overrides the config's project tree (paths are
-        re-resolved against it); `out` overrides where generated files go."""
+        re-resolved against it); `out` overrides where generated files go;
+        `store` replaces the default decision store (the project's decisions.yaml)."""
         cfg = Config.load(config_path, root=root)
         if out is not None:
             from pathlib import Path
             cfg.out = Path(out).resolve()
         wb = cls(cfg)
+        if store is not None:
+            wb.store = store
         from . import builtin
         builtin.register(wb)
         if plugins:

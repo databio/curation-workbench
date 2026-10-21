@@ -2,7 +2,7 @@
 
 Rebuild of ONGA's curation workbench as a standalone package, with ONGA as a
 configured project (`adapters/onga/`). Each stage is checked against ONGA's own
-code and outputs (`tests/`, 11 tests, ~2 min). Nothing in the ONGA repo was
+code and outputs (`tests/`, 11 ONGA and toy tests, ~2 min). Nothing in the ONGA repo was
 changed.
 
 | Stage | What | Reproduces ONGA? |
@@ -17,10 +17,20 @@ changed.
 Also: a toy project with no plugins (`tests/fixtures/toy`) runs regen,
 decisions and a real apply.
 
+Storage seam (2026-10-21): decision storage is one interface with two
+backends, the local YAML file (unchanged output, still checked by the tests
+above) and Postgres for the hosted version (projects, votes, hosted `H-`
+decisions, migrations 010-013, export back to `decisions.yaml`). Both run the
+same contract tests (`tests/test_store_contract.py`); Postgres-only behavior is
+in `tests/test_pg_store.py` (`scripts/test-postgres.sh`). `cwb apply` is
+local-only by design: hosted decisions reach the repo through export.
+
 ## Behavior differences
 
 - **Protected-name refusals** read `X is protected (named in site/scripts/build-data.js); ...`
   instead of ONGA's per-handler wording. The refusals happen in the same cases.
+- **Origin vocabulary** gains `hosted`, so the "origin.kind must be one of [...]"
+  error lists it; ONGA's store does not. The store test allows exactly this.
 - **Lint rules missing from policy.yaml are switched off** instead of crashing
   with a KeyError. ONGA configures every rule it emits, so its output is unchanged.
 - **Usage lint rules** (`zero-usage-term`, `unmapped-high-usage`) treat a term
@@ -47,6 +57,7 @@ annotation, id scheme, examples dir) are now options in `workbench.yaml`.
   are the model; today they live in ONGA's Astro site).
 - Point ONGA at this package: move `adapters/onga/` into the ONGA repo, replace
   its scripts/workbench and the five scripts with `cwb`, and switch its Makefile.
-- The hosted multi-user version (votes in a database, Prosopia sign-in).
+- The hosted multi-user version: Prosopia sign-in, teams, the API, the sync
+  worker and deployment. (Done: votes and hosted decisions in Postgres.)
 - ONGA's `curation/verdicts.yaml` cannot be read by PyYAML (a flow map at line
   255 uses `?`); ruamel reads it. Harmless today, but worth fixing in ONGA.

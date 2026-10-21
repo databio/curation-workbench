@@ -12,7 +12,9 @@ stamps each decision as applied. Automatic **lint** findings and a ranked
 **queue** say what to look at next, and **review types** split that queue into
 kinds of work with one question each.
 
-Everything is plain files in git. There is no database.
+In local mode everything is plain files in git and there is no database. A
+hosted, multi-user mode (in progress) keeps votes and hosted decisions in
+Postgres; see [Storage](#storage).
 
 It was extracted from ONGA (Ontology of Genomic Annotations), which is its
 first project; see `adapters/onga/`.
@@ -20,7 +22,8 @@ first project; see `adapters/onga/`.
 ## Install
 
 ```bash
-uv venv && uv pip install -e ".[test]"
+uv venv && uv pip install -e ".[test]"          # tests include the Postgres store's
+uv pip install -e ".[postgres]"                 # hosted store only (SQLAlchemy + psycopg 3)
 ```
 
 ## Commands
@@ -114,6 +117,58 @@ everything project-specific goes through these hooks:
 | `wb.protected_names` | `(ctx, section) -> {name: reason}` | class/enum rename, move, delete |
 | `wb.routes` | `(method, prefix, fn(api, tail))` | daemon |
 | `wb.regen` | `(wb, out_dir)` | `cwb regen`, in-process apply regen |
+
+## Storage
+
+Decisions go through one interface (`curation_workbench.store`) with two
+backends. Both call the same validator (`store.validate`, `store.validate_vote`);
+neither has rules of its own.
+
+- **Local mode (default):** `YamlStore`, the project's `curation/decisions.yaml`.
+  It mints `DEC-NNNN` ids and writes the file exactly as before. Optimistic
+  concurrency is whole-file (`mtime_ns`, the daemon's `X-Store-Mtime` header).
+  `cwb apply` runs only against this store.
+- **Hosted mode:** `PgStore(engine, project_id)`, Postgres through psycopg 3.
+  It holds projects, votes and hosted decisions only. Hosted ids are `H-NNNN`
+  per project with `origin: {kind: hosted, ref: <own id>}`, so they never
+  collide with a repo's `DEC-` ids. Each record and vote has a `rev` for
+  compare-and-swap; the project's `decisions_rev` is the store-wide token.
+  The repo's own decisions are never imported (the hosted service reads them
+  from the project snapshot).
+
+Connection: `CWB_DATABASE_URL` (`postgresql+psycopg://...`; bare
+`postgresql://` is rewritten to it, `+psycopg2` is refused), else
+`POSTGRES_DB/USER/PASSWORD/HOST/PORT`. See `.env.example`.
+
+```bash
+scripts/dev-db.sh start                     # local dev Postgres (cwb-dev-pg, port 55436)
+export CWB_DATABASE_URL=$(scripts/dev-db.sh url)
+cwb db migrate                              # apply deployment/migrations/*.sql
+cwb db status                               # exit 0 only if nothing is pending, unknown or missing
+cwb db project add onga --name ONGA         # create a hosted project
+cwb db export --project onga --template curation/decisions.yaml -o out.yaml [--ids H-0001 ...]
+scripts/test-postgres.sh                    # postgres tests in a throwaway container (port 55437)
+```
+
+**Export** (the seam for sending hosted decisions back as a pull request):
+`export_yaml` appends a project's pending hosted decisions to a copy of the
+repo's `decisions.yaml`, renumbered into its `DEC-` sequence; each keeps
+`origin.ref` = its old `H-` id. With nothing to export the output is
+byte-identical to the input.
+
+**Migrations** live in `deployment/migrations/` (override: `CWB_MIGRATIONS_DIR`),
+one numbered file each, applied once by `cwb db migrate` and recorded in
+`schema_migrations`. Before the first production deploy, fix a mistake by
+editing the owning file and recreating the dev database; after it, only add files.
+
+| Numbers | Owner | Files |
+|---|---|---|
+| `001` | hosted service | `001_snapgate.sql` (snapgate base tables) |
+| `010-019` | storage | `010_projects.sql`, `011_decisions.sql`, `012_votes.sql`, `013_decision_votes.sql` |
+| `020-029` | hosted service | team members, question resolutions, user foreign keys |
+| `030-039` | free | |
+| `040-049` | sync worker | residents, snapshots, derived status, sync jobs, stale events |
+| `090-099` | hosted service | snapgate upgrades |
 
 ## The ONGA reproduction
 

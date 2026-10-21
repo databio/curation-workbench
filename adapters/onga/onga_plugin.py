@@ -154,7 +154,6 @@ def facet_rules(linter):
     residual-compound: a content term whose label still names a facet, with no
     keep_atomic decision."""
     from curation_workbench.lint import word_in
-    from curation_workbench.store import plain_records
     pol = linter.pol
     facet_labels = {e: set() for e in pol["facet_enums"]}
     for t in linter.of_kind["term"]:
@@ -167,7 +166,7 @@ def facet_rules(linter):
         for k, v in r.items():
             if k not in FACET_NON_AXIS and v and v.strip():
                 decomposed.add(v.strip())
-    keep_atomic = {d["subject"] for d in plain_records(linter.wb.cfg.decisions)
+    keep_atomic = {d["subject"] for d in linter.wb.store.records()
                    if d.get("verdict") == "keep_atomic" and d.get("status") != "withdrawn"}
     for t in linter.of_kind["term"]:
         sid, label = t["sid"], t["label"]

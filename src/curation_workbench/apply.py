@@ -33,7 +33,7 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import store, subjects as registry, yamlio
+from . import store, subjects as registry
 from .handlers import ApplyError, Ctx
 from .termids import TermIds
 
@@ -91,14 +91,13 @@ def order(wb, recs, subjects, verdicts):
     return [idx[i] for i in out]
 
 
-def select(doc, verdicts, subjects, want=None):
+def select(records, verdicts, subjects, want=None):
     recs, errors = [], {}
-    known = {r["id"] for r in doc.data["decisions"]}
+    known = {r["id"] for r in records}
     for rid in want or ():
         if rid not in known:
             errors[rid] = [f"no decision {rid}"]
-    for r in doc.data["decisions"]:
-        r = store.to_plain(r)
+    for r in records:
         if want and r["id"] not in want:
             continue
         if r["status"] != "pending":
@@ -114,14 +113,14 @@ def select(doc, verdicts, subjects, want=None):
     return recs, errors
 
 
-def validate(wb, recs, subjects, verdicts, doc=None):
+def validate(wb, recs, subjects, verdicts, known_ids=None):
     errors = {}
     for r in recs:
         rec = dict(r)
         if isinstance(rec.get("decided_on"), str):
             rec["decided_on"] = datetime.date.fromisoformat(rec["decided_on"])
         try:
-            store.validate(rec, subjects, verdicts, doc=doc, check_hashes=False, wb=wb)
+            store.validate(rec, subjects, verdicts, known_ids=known_ids, check_hashes=False, wb=wb)
         except store.StoreError as e:
             errors[r["id"]] = e.errors
             continue
@@ -169,9 +168,10 @@ def plan(wb, want=None):
         subjects = fresh_subjects(wb)
     except registry.RegistryError as e:
         return Result(False, errors={"run": [f"subject registry: {e}"]}), None
-    doc = store.load(wb.cfg.decisions)
-    recs, errors = select(doc, verdicts, subjects, want)
-    errors.update(validate(wb, [r for r in recs if r["id"] not in errors], subjects, verdicts, doc))
+    records = wb.store.records()
+    recs, errors = select(records, verdicts, subjects, want)
+    known = {r["id"] for r in records}
+    errors.update(validate(wb, [r for r in recs if r["id"] not in errors], subjects, verdicts, known))
     if errors:
         return Result(False, errors=errors), None
     try:
@@ -262,9 +262,8 @@ def _stamp(wb, result, before):
     Subjects the run changed as a side effect are stamped on the run's last
     record, so they do not read as hand-edited (`stale`) afterwards."""
     after = json.loads(wb.cfg.output("subjects.json").read_text())["subjects"]
-    doc = store.load(wb.cfg.decisions)
     today = datetime.date.today()
-    by_id = {r["id"]: r for r in doc.data["decisions"]}
+    stamps = {}
     touched = set()
     for i, r in enumerate(result.records):
         eff = result.effects[r["id"]]
@@ -275,18 +274,18 @@ def _stamp(wb, result, before):
         if i == len(result.records) - 1:
             hashes.update({s: a["hash"] for s, a in after.items() if s not in touched
                            and s in before and before[s]["hash"] != a["hash"]})
-        rec = by_id[r["id"]]
-        rec["status"] = "applied"
-        rec["applied"] = store._to_yaml({
-            "on": datetime.date.fromordinal(today.toordinal()),
+        stamps[r["id"]] = {
+            "on": today,
             "subject_hashes_after": hashes,
             "created": list(eff.created), "retired": list(eff.retired),
             **({"renamed": dict(eff.renamed)} if eff.renamed else {}),
-        })
-    yamlio.dump(doc, wb.cfg.decisions)
+        }
+    wb.store.mark_applied(stamps)
 
 
 def run(wb, want=None, dry_run=False):
+    if wb.store.kind != "yaml":
+        raise ApplyError("apply needs the local YAML store; hosted decisions reach the repo via export")
     result, ctx = plan(wb, want)
     if not result.ok or dry_run or not result.records:
         return result

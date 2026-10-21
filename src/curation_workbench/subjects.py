@@ -25,7 +25,7 @@ import hashlib
 import json
 import re
 
-from . import schema, store
+from . import schema
 from .termids import TermIds
 
 KINDS = ("module", "subset", "enum", "term", "class", "slot", "usage")
@@ -278,7 +278,7 @@ def fingerprint(records):
 def aliases(wb):
     """{old SID: new SID} from applied rename records, in id order."""
     out = {}
-    for d in store.plain_records(wb.cfg.decisions):
+    for d in wb.store.records():
         if d.get("status") == "applied" and str(d.get("verdict", "")).startswith("rename"):
             out.update((d.get("applied") or {}).get("renamed") or {})
     return dict(sorted(out.items()))

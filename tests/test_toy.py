@@ -50,7 +50,8 @@ def record(wb, sid, verdict, op=None, **kw):
     rec = {"subject": sid, "verdict": verdict, "rationale": "test", "decided_by": "tester",
            "decided_on": "2026-10-21", "operation": {"op": verdict, **op} if op else None,
            "subject_hashes": {sid: subj.get(sid)["hash"]}, **kw}
-    return store.create(rec, subj, store.load_verdicts(wb.cfg.verdicts), wb.cfg.decisions, wb=wb)
+    ctx = store.ValidationContext(subjects=subj, verdicts=store.load_verdicts(wb.cfg.verdicts), wb=wb)
+    return wb.store.create(rec, ctx)
 
 
 def test_apply(toy):
@@ -69,7 +70,7 @@ def test_apply(toy):
     ledger = toy.cfg.ledger.read_text()
     assert ledger.startswith("# toy term ledger") and "TOY_0003\tlive" in ledger
     assert "semapv:ManualMappingCuration" in (toy.cfg.root / "mappings" / "ex.sssom.tsv").read_text()
-    recs = store.plain_records(toy.cfg.decisions)
+    recs = toy.store.records()
     assert [r["status"] for r in recs] == ["applied"] * 4
     st = json.loads(toy.cfg.output("status.json").read_text())
     assert st["subjects"]["term:TOY_0003"]["state"] == "applied"
