@@ -228,11 +228,15 @@ worker_never_migrates() {
 # 13. (ssh) The worker publishes no port and has no databio_net alias.
 worker_no_ports_no_alias() {
   local out
-  out="$(on_goat "docker service inspect ${WORKER_SERVICE} --format 'ports={{len .Endpoint.Ports}} {{range .Spec.TaskTemplate.Networks}}aliases={{len .Aliases}} {{end}}'" 2>/dev/null)" || return 1
+  local own="${WORKER_SERVICE#*_}" alias
+  out="$(on_goat "docker service inspect ${WORKER_SERVICE} --format 'ports={{len .Endpoint.Ports}} {{range .Spec.TaskTemplate.Networks}}{{range .Aliases}}alias={{.}} {{end}}{{end}}'" 2>/dev/null)" || return 1
   echo "        $out"
   case "$out" in *"ports=0 "*) ;; *) return 1 ;; esac
-  # Any alias (aliases=1, 2, ...) on any network is a failure.
-  case "$out" in *aliases=[1-9]*) return 1 ;; esac
+  # docker stack deploy always adds the service's own short name; any other
+  # alias (such as the API's name) is a failure.
+  for alias in $(printf '%s' "$out" | grep -oE 'alias=[^ ]+'); do
+    [ "${alias#alias=}" = "$own" ] || return 1
+  done
   return 0
 }
 
@@ -324,7 +328,7 @@ if [ "$SKIP_SSH" = "1" ]; then
   skip "cwb db status in $SERVICE (CWB_VERIFY_SKIP_SSH=1)"
   skip "$WORKER_SERVICE is 1/1 and logged '$WORKER_LOOP_LINE' (CWB_VERIFY_SKIP_SSH=1)"
   skip "$WORKER_SERVICE never migrates (CWB_VERIFY_SKIP_SSH=1)"
-  skip "$WORKER_SERVICE publishes no port and has no network alias (CWB_VERIFY_SKIP_SSH=1)"
+  skip "$WORKER_SERVICE publishes no port and no alias but its own name (CWB_VERIFY_SKIP_SSH=1)"
   skip "$RUNNER_SERVICE is 1/1 and isolated (CWB_VERIFY_SKIP_SSH=1)"
   skip "cwb hosted isolation-check in $WORKER_SERVICE ends ISOLATED (CWB_VERIFY_SKIP_SSH=1)"
   skip "residents have a current snapshot and no error (CWB_VERIFY_SKIP_SSH=1)"
@@ -332,7 +336,7 @@ else
   check "cwb db status exits 0 in $SERVICE" db_status_in_task
   check "$WORKER_SERVICE is 1/1 and logged '$WORKER_LOOP_LINE'" worker_running
   check "$WORKER_SERVICE never migrates (no migrate in its entrypoint or log)" worker_never_migrates
-  check "$WORKER_SERVICE publishes no port and has no network alias" worker_no_ports_no_alias
+  check "$WORKER_SERVICE publishes no port and no alias but its own name" worker_no_ports_no_alias
   check "$RUNNER_SERVICE is 1/1, has no secrets, a read-only root, no capabilities, no port, and only $RUN_NET" runner_isolated
   check "cwb hosted isolation-check in $WORKER_SERVICE ends ISOLATED" isolation_check_in_task
   if ! read_residents; then
