@@ -1,8 +1,8 @@
 """API key scopes, handed to snapgate at setup.
 
 A browser session holds every scope. Settings-page keys get `curation:read`
-and `curation:vote` unless the person ticks `curation:decide`. Team, project
-and resident admin is browser-session only, never a key.
+and `curation:vote` unless the person ticks `curation:decide`. Team and
+project admin is browser-session only, never a key.
 """
 from __future__ import annotations
 

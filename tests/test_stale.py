@@ -11,7 +11,7 @@ from conftest import seed_users
 from sqlalchemy import select
 
 from curation_workbench import snapshot, store
-from curation_workbench.hosted.sync import publish, residents, stale
+from curation_workbench.hosted.sync import publish, repos, stale
 from curation_workbench.hosted.sync.tables import cw_stale_events
 from curation_workbench.store.pg import PgStore, projects
 from curation_workbench.workbench import Workbench
@@ -31,11 +31,11 @@ def env(pg_engine, tmp_path):
     pid = projects.create_project(pg_engine, "toy", "Toy")["id"]
     seed_users(pg_engine, 1, 2, 3)
     with pg_engine.begin() as conn:
-        rid = residents.ensure_dev_resident(conn, pid, str(root))
+        repos.ensure_dev_repo(conn, pid, "toy")
     st = PgStore(pg_engine, pid)
     ctx = store.ValidationContext(subjects=store.Subjects(bundle["subjects"]),
                                   verdicts=bundle["verdicts"], review_types=REVIEW_TYPES)
-    return pg_engine, rid, st, ctx, bundle
+    return pg_engine, pid, st, ctx, bundle
 
 
 def publish_(engine, rid, bundle, sha):

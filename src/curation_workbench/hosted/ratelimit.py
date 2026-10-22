@@ -18,8 +18,7 @@ express: failed-credential counting and per-user limits.
 Env: ``CWB_RATE_LIMITS=off`` disables everything;
 ``CWB_RL_<BUCKET>=count/seconds`` overrides one bucket, e.g.
 ``CWB_RL_USER_REQUESTS=600/60``. New buckets are fields on
-:class:`RateLimitConfig`, never a second limiter. The GitHub webhook has its
-own per-resident limit (``hosted.sync.webhook``).
+:class:`RateLimitConfig`, never a second limiter.
 """
 
 from __future__ import annotations

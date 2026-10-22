@@ -12,9 +12,13 @@ TOY = Path(__file__).resolve().parents[1] / "fixtures" / "toy"
 
 
 def publish(engine, slug, root):
-    """The `cwb hosted admin dev-snapshot` logic: publish `root`'s snapshot."""
+    """Build `root`'s snapshot as a project's own `cwb snapshot` would (test
+    code, not the site), then publish it the `cwb hosted admin dev-snapshot` way."""
+    from curation_workbench import snapshot
+    from curation_workbench.workbench import Workbench
     project_data.clear_cache()
-    return dev_snapshot(engine, slug, root / "workbench.yaml")
+    bundle = snapshot.build(Workbench.open(root / "workbench.yaml"))
+    return dev_snapshot(engine, slug, bundle)
 
 
 def vote_body(toy_hash, sid="term:TOY_0001", review_type="vocabulary/links", answer="keep",

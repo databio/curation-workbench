@@ -10,7 +10,7 @@ serializes id minting and the `decisions_rev` counter per project. Each record
 and vote also has a `rev` integer for compare-and-swap (`expect_rev`), and
 `decisions_rev` is the store-wide token (`expect_token`).
 
-Staleness is stored, not computed: plan 4's worker writes the `stale_*`
+Staleness is stored, not computed: the staleness pass (hosted.sync.stale) writes the `stale_*`
 columns through `set_stale` / `clear_stale`.
 """
 from __future__ import annotations
@@ -428,7 +428,7 @@ class PgStore:
                      "subject_hash": r.subject_hash, "vote_rev": r.vote_rev}
                     for r in conn.execute(q)]
 
-    # ------------------------------------------------------------ staleness (plan 4's worker)
+    # ------------------------------------------------------------ staleness (hosted.sync.stale)
 
     @staticmethod
     def _marks(r) -> dict:

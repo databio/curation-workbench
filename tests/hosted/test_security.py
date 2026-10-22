@@ -74,4 +74,4 @@ def test_dev_snapshot_is_dev_only(monkeypatch):
             monkeypatch.delenv("CWB_ENV")
         get_settings.cache_clear()
         with pytest.raises(SystemExit, match="dev only"):
-            cli.main(["hosted", "admin", "dev-snapshot", "--project", "toy", "--config", "x.yaml"])
+            cli.main(["hosted", "admin", "dev-snapshot", "--project", "toy", "--snapshot", "x.json"])

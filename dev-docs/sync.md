@@ -1,114 +1,102 @@
-# Resident projects and the sync worker
+# How the website gets each project's data
 
-In hosted mode the schema stays in each project's own git repo; the service
-only handles curation decisions. So the server keeps its own copy of each
-project's repo and rebuilds the generated data whenever a new commit lands.
-A **resident** is the registration record for one project's repo; the
-**sync worker** watches residents and publishes their data to Postgres, where
-the API reads it.
+The schema stays in each project's own git repo. The website only handles
+curation decisions, so it needs one thing from the repo: the **snapshot**, a
+JSON file that the repo builds and commits itself. The website downloads that
+file from GitHub and never runs the project's code.
 
 ```
-GitHub repo ──ls-remote/fetch──> worker (cwb hosted worker) ──tar──> runner (cwb runner)
-   ^  push webhook (optional)         |  holds DB secret,          no secrets, no network,
-   |                                  |  GitHub read access        read-only root, tmpfs
-API ── request_derive ───────────────>|                            runs all repo code
-                                      |<──── snapshot bundle ───── incl. plugins
-                                      v
-                      Postgres: cw_residents, cw_snapshots, cw_derived,
-                      cw_sync_jobs, cw_stale_events, cw_plugin_approvals
-                      + stale marks on votes/decisions
+project repo (laptop or CI)                    curate.databio.org (one API process)
+  make regen -> cwb regen                        every CWB_FETCH_SECONDS (300):
+    runs the plugins (trusted, local)              GET api.github.com/repos/<repo>/commits/<branch>
+    writes curation/snapshot.json   -- push -->    new commit? GET raw.githubusercontent.com/<repo>/<sha>/workbench.yaml
+    (`snapshot:` in workbench.yaml)                            GET raw.githubusercontent.com/<repo>/<sha>/<snapshot path>
+                                                   publish: Postgres cw_snapshots, mark landed decisions,
+                                                            staleness pass
+                                                 on each read: derive status + review from the
+                                                   snapshot and the decisions (cached by rev)
 ```
 
-## Two phases: snapshot and derive
+## The snapshot file
 
 `snapshot.build(wb)` computes everything that depends only on the repo at one
 commit (subjects, crosswalk, aliases, lint, generic and plugin findings, every
-queue signal) into one JSON bundle (`cwb-snapshot/1`, keys in
-`src/curation_workbench/snapshot.py`). It is the only place plugin code runs.
+queue signal, the review UI's plugin hooks) into one bundle (`cwb-snapshot/1`,
+keys in `src/curation_workbench/snapshot.py`). It is the only place plugin code
+runs, and it runs only on the project's own machines.
+
+Set `snapshot: curation/snapshot.json` in `workbench.yaml` (relative to that
+file). Then `cwb regen` writes it next to status.json and review.json, `cwb
+snapshot` writes just it, and `cwb snapshot --check` / `cwb regen --check`
+fail when it is out of date. ONGA's `make regen` writes it and `make test`
+checks it. The file must be byte-stable for a given commit (signals return
+sorted dicts), so the check never flaps.
 
 `derive.status(bundle, decisions)` and `derive.review(bundle, status, next_id)`
 turn a bundle plus a decision list into status.json and review.json. They are
-generic code with no plugin calls, so the worker runs them on every decision
-change in milliseconds. `derive.merge_decisions(repo, hosted)` puts the repo's
-decisions first and drops any hosted one the repo already holds (a repo record
-with `origin: {kind: hosted, ref: <H- id>}`).
-
-Signals may not read decisions. The one decision-dependent signal, `port`, is
-a *masked* signal: the bundle carries its raw values and derive zeroes it
-where a terminal decision exists.
-
-`cwb regen` (in a checkout) is the same pair: snapshot then derive.
+generic code with no plugin calls and take milliseconds.
+`derive.merge_decisions(repo, hosted)` puts the repo's decisions first and
+drops any hosted one the repo already holds (a repo record with
+`origin: {kind: hosted, ref: <H- id>}`). With no hosted decisions, the site's
+review equals the repo's committed review.json except `decisions_next_id`
+(`tests/test_onga.py::test_site_review_from_the_committed_snapshot`).
 
 ## Trust model
 
-- Only a superadmin registers a resident (`cwb hosted resident add`, as the
-  operator inside the API or worker container). API keys are never admin.
-- Plugin code runs only if its git tree id (of `plugin_dir`) matches one a
-  superadmin approved after reading it (`plugin-diff`, `approve-plugin --tree`).
-  The approved files are stored in `cw_plugin_approvals`, so the worker never
-  depends on the object still being in the remote.
-- When a commit changes the plugin tree, the worker keeps running the last
-  approved files on the new commit and warns `plugin code changed at <sha>
-  (tree <tree>); still running approved tree <approved>`. With no approval it
-  runs generic findings only and warns `plugin not approved; generic findings
-  only`. `revoke-plugin` makes every earlier approval inactive.
-- Repo code (generic or plugin) runs only in the runner, a separate service
-  with no secrets, no route out, a read-only root, a tmpfs /tmp, no
-  capabilities and a non-root user. Each job runs in a child process in a
-  fresh /tmp folder, killed at `CWB_RUNNER_TIMEOUT`.
-- In hosted mode (`Workbench.open(..., hosted=True)`) every config path must
-  stay inside the checkout, symlinks out are refused, plugins import only from
-  `plugin_dir`, and `apply:`, `wb.routes` and `wb.regen` are ignored.
-- The worker never checks out a working tree and never runs repo code: it
-  lists heads, fetches, and exports commits with `git archive`, rewritten in
-  Python (no `.git*`, no absolute paths, no `..`, no symlinks out, size cap).
-- A production worker refuses to start without `CWB_RUNNER_URL`.
+- The site imports and runs no project code. It reads `workbench.yaml` as data
+  (`yaml.safe_load`) and the snapshot as JSON, checks the format, and stores it
+  (`tests/test_module_boundaries.py` checks that the API never loads
+  `curation_workbench.workbench`, the only module that imports plugins).
+- No git, no clone, no credentials: public repos over plain HTTPS
+  (`hosted/sync/github.py`). The server holds no GitHub token at all.
+- The `snapshot:` path must stay inside the repo; downloads are size-capped
+  (1 MiB for workbench.yaml, 64 MiB for the snapshot).
+- Only a superadmin registers a project (the admin form on the home page, or
+  `cwb hosted project add` in the API container). API keys are never admin.
 
-## Jobs (`cw_sync_jobs`)
+## Tables (`041_repo_snapshots.sql`)
 
-One live (`queued` or `running`) job per resident and kind (partial unique
-index); a second enqueue is a no-op. Claimed with `FOR UPDATE SKIP LOCKED`,
-commit before checks before derive, then oldest. Stuck jobs (running longer
-than `CWB_WORKER_STUCK_SECONDS`) go back to queued, and fail after
-`CWB_WORKER_MAX_ATTEMPTS`.
+| Table | Holds |
+|---|---|
+| `cw_repos` | per project: `repo` (`owner/name` on github.com), `branch`, `current_snapshot_id`, `last_commit`, `last_checked_at`, `last_error` |
+| `cw_snapshots` | one row per (project, commit): the gzipped bundle, its sha256, fingerprint, warnings |
+| `cw_stale_events` | append-only log of every stale mark and clear |
 
-| Kind | Trigger | What it does |
-|---|---|---|
-| `commit` | poll, webhook, manual | fetch; resolve the branch head (a webhook's sha is never trusted); pick the plugin tree; reuse the snapshot for (commit, tree) or archive and run the runner's `snapshot`; publish |
-| `derive` | decisions | status/review from the current bundle and decisions, plus the staleness pass; no runner |
-| `checks` | decisions, manual | the plugins' decision checks on pending hosted decisions, in the runner (`mode: checks`); stored as `cw_derived.decision_checks` |
+Snapshots are never deleted: stale marks on votes and decisions point at the
+snapshot that made them stale. There is no derived-data table and no job
+queue: `hosted/project_data.py` derives status and review on read and caches
+them in memory by (snapshot id, `projects.decisions_rev`).
 
-The loop (every `CWB_WORKER_TICK_SECONDS`): recover stuck jobs; poll residents
-due for a check (`ls-remote`; a head unlike the current snapshot's commit
-queues `commit`); queue `derive` when `projects.decisions_rev` differs from
-`cw_derived.decisions_version`, and `checks` when decision hooks exist and the
-rev has held still for 5 s; claim and run one job. The API also calls
-`hosted.sync.request_derive(conn, project_id)` after each write.
+## Fetching (`hosted/sync/repos.py`)
 
-A failed commit job leaves the current snapshot live and sets
-`cw_residents.last_error`. The last archive per resident is kept at
-`$CWB_SYNC_DIR/trees/<resident>/<snapshot>.tar` for checks jobs.
+`sync_project(engine, slug)` asks GitHub for the branch head. Same commit as
+the current snapshot: it only records `last_checked_at`. New commit: it reads
+`workbench.yaml` at that commit, takes `snapshot:`, downloads the file and
+calls `publish_snapshot`. Any failure is stored in `last_error` and the last
+good snapshot stays live. `Poller` runs `sync_all` every `CWB_FETCH_SECONDS`
+(default 300 in production, off elsewhere) in a daemon thread of the API
+process. A superadmin can fetch at once with **Fetch now** on the home page or
+`cwb hosted project sync <slug>`. Unauthenticated GitHub API calls are limited
+to 60 an hour per IP; one check per project every 5 minutes is 12.
+
+Projects whose repo is `dev:<label>` (made by `cwb hosted admin dev-snapshot`,
+dev and tests only) are never fetched.
 
 ## The publish transaction
 
-`hosted.sync.publish.publish_snapshot(conn, resident_id, bundle, commit_sha,
-plugin_tree_used=None)`, in one transaction:
+`hosted.sync.publish.publish_snapshot(conn, project_id, bundle, commit_sha)`,
+in one transaction:
 
-1. lock the resident row; insert the `cw_snapshots` row (or reuse the one for
-   the same commit and plugin tree);
-2. the staleness pass;
-3. derive status and review from the bundle and
-   `merge_decisions(bundle.repo_decisions, store.records())`, and overwrite
-   `cw_derived` with the `decisions_rev` read in the same transaction (a new
-   snapshot also resets `decision_checks`);
-4. make the snapshot current and clear `last_error`; queue `checks` when the
-   bundle's plugins have decision hooks.
-
-Plan 2's dev stand-in publishes through the same function to a disabled
-`dev:<path>` resident (`residents.ensure_dev_resident`).
-
-`cw_derived.status` and `.review` are `json`, not `jsonb`, so key order
-survives (rollups, subjects).
+1. lock the project's `cw_repos` row; insert the `cw_snapshots` row (or reuse
+   the one for the same commit);
+2. `mark_landed`: every pending hosted decision whose id appears as an
+   `origin.ref` in `bundle.repo_decisions` is marked applied with the repo
+   record's `applied` block plus `repo_id` and `commit` (a non-terminal record
+   such as `defer` stays pending in the repo; its hosted copy gets just the
+   date). This runs before the staleness pass, so a decision is never marked
+   stale by its own change;
+3. the staleness pass;
+4. make the snapshot current and clear `last_error`.
 
 ## Staleness rules
 
@@ -122,110 +110,42 @@ first failing one gives the reason):
 - otherwise a mark is cleared (a revert brought the content back).
 
 Applied and withdrawn decisions and the repo's own decisions are never
-touched. Marks go through plan 1's `set_stale` / `clear_stale` (they never
-bump `decisions_rev`), every change appends a `cw_stale_events` row, and
-nothing is deleted. A voter who votes again clears the mark. The pass is
-idempotent and runs in full on every publish and every derive (so a vote cast
-against a hash that a just-published snapshot changed is caught by the next
-derive).
+touched. Marks go through `PgStore.set_stale` / `clear_stale` (they never bump
+`decisions_rev`), every change appends a `cw_stale_events` row, and nothing is
+deleted. A voter who votes again clears the mark. The pass is idempotent and
+runs on every publish and after every vote or decision write
+(`publish.refresh_stale`, in the write's transaction).
 
 Findings files whose fingerprint does not match (for example embeddings
 reports not regenerated after a schema change) show as stale sources in the
 bundle and as warnings ("... is from an older schema").
 
-## Resident admin
+## Registering a project
 
 ```bash
-cwb db project add onga --name ONGA
-cwb hosted resident add --project onga --repo https://github.com/databio/onga \
-    --branch master --config workbench.yaml --plugin-dir curation/plugin
-cwb hosted resident plugin-diff onga        # read the plugin code
-cwb hosted resident approve-plugin onga --tree <tree printed by plugin-diff>
-cwb hosted resident sync onga --wait
-cwb hosted resident show onga               # snapshot, plugins, warnings, jobs, plugin status
-cwb hosted resident check onga              # rebuild the commit in the runner and compare
+cwb hosted project add onga --name ONGA --repo https://github.com/databio/onga --branch master
+cwb hosted project list            # repo, commit, last fetch, error
+cwb hosted project show onga       # plus the snapshot's plugins and findings sources
+cwb hosted project sync onga       # fetch now
 ```
 
-`add` checks the URL (https on `CWB_ALLOWED_GIT_HOSTS`), runs one
-`ls-remote`, and prints the webhook secret once. There is no remove: disable
-instead. The webhook (`POST /api/v1/hooks/github/{slug}`, mounted by the API)
-checks `X-Hub-Signature-256`, answers `ping`, ignores other branches, and
-queues a commit job; polling every 300 s works without it.
-
-### Registering ONGA (after plan 6 moves its adapter into the ONGA repo)
-
-1. ONGA's `workbench.yaml` at the root with `plugin_dir: curation/plugin`, the
-   plugin and its helpers in `curation/plugin/`, review types in
-   `curation/review_types.yaml`, pushed to `master`.
-2. Run the commands above in the deployed container. `show` must report a
-   current snapshot at ONGA's head, `onga_plugin` on the approved tree, the
-   fingerprint of ONGA's committed `curation/subjects.json`, embeddings sources
-   not stale, and no `last_error`; `check` must print MATCH.
-3. Optionally add the push webhook in GitHub (content type JSON, the secret
-   `add` printed).
-
-Checked locally: `tests/test_onga_hosted.py` runs ONGA's tree (git archive of
-a scratch worktree, adapter in the plan 6 layout) through the runner in a
-child process with hosted rules, and the derived status.json and review.json
-equal `cwb regen`'s. ONGA's `live_so_terms` already returns None without the
-gitignored `so.obo`, so hosted `checks` jobs skip that check instead of failing.
-
-## Deployment settings (input to the deploy plan)
-
-Same image as the API, stack `curate`. The image needs `git`, and
-`/var/lib/cwb` owned by uid 1000.
-
-- **`curate-worker`** (`cwb hosted worker`): secret `curate_env` (Postgres,
-  optional `CWB_GITHUB_READ_TOKEN`); networks `databio_net` (Postgres, no
-  alias) and the stack's internal `run_net` (on goat `curate_run_net`);
-  outbound internet for GitHub; named volume `curate_sync_data` at
-  `/var/lib/cwb`; one replica; never migrates (waits for `cwb db migrate`,
-  run by the API service, then prints `cwb worker started`). Env:
-  `CWB_ENV=production`, `CWB_RUNNER_URL=http://curate-runner:8150`,
-  `CWB_SYNC_DIR`, `CWB_WORKER_TICK_SECONDS` (10), `CWB_WORKER_STUCK_SECONDS`
-  (900), `CWB_WORKER_MAX_ATTEMPTS` (3), `CWB_MAX_TREE_BYTES` (200 MiB),
-  `CWB_ALLOWED_GIT_HOSTS` (github.com), `CWB_RUNNER_TIMEOUT` (300).
-- **`curate-runner`** (`cwb runner --port 8150`): no secrets, no `curate_env`,
-  only `run_net` (internal overlay, no route out), read-only root, 256 MiB
-  tmpfs `/tmp`, uid 1000, all capabilities dropped, memory 512 MiB (1 GiB max), CPU 1,
-  pids 256, one replica. Env: `CWB_RUNNER_TIMEOUT`, `CWB_MAX_TREE_BYTES`.
-- `verify.sh` should check: worker and runner 1/1; the runner has no secrets,
-  a read-only root, no capabilities and only `curate_run_net`; over ssh,
-  `cwb hosted resident list` in the API task shows each enabled resident with
-  a current snapshot and no error (SKIP when there are none).
-- Runbook: `docker service logs curate_curate-worker` (one line per job:
-  resident, kind, trigger, sha, outcome, seconds; never a secret),
-  `cwb hosted resident show <slug>`, and `cwb hosted isolation-check` in the
-  worker task (self-check plus a probe plugin that tries to read
-  `/run/secrets/curate_env`, reach the internet and write outside /tmp; must
-  end `ISOLATED`).
-
-Not yet exercised: the runner inside Docker with these limits (the
-isolation check was only run on a laptop, where it correctly says NOT
-ISOLATED), a real GitHub remote, and the webhook behind nginx.
+Or the **Add a project** form on the home page (superadmin). Both refuse a
+repo GitHub cannot read, then fetch once; a snapshot that fails to load is
+reported as the project's last error.
 
 ## How approved decisions reach the repo (and get marked applied)
 
-The service never holds git write credentials. The project repo pulls:
+The service never holds git credentials. The project repo pulls:
 
 1. A GitHub Action in the project repo (ONGA: `.github/workflows/curate.yml`)
    runs `cwb pull <slug>` with a `curation:read` key (repo secret
    `CURATE_API_KEY`) and opens a pull request with its own `GITHUB_TOKEN`.
 2. `cwb pull` reads `GET /api/v1/projects/<slug>/decisions/export`: pending
-   hosted decisions that are not stale and have no `decision_checks` errors
-   (the rest come back in `held`). It appends them to the checkout's
-   `decisions.yaml` with `store.landing.append_hosted` (renumbered to `DEC-`,
-   `origin: {kind: hosted, ref: <H- id>}`) and applies them with the normal
-   apply engine, all or nothing.
-3. After the merge, the next commit job publishes the new snapshot.
-   `publish_snapshot` first runs `publish.mark_landed`: every pending hosted
-   decision whose id appears as an `origin.ref` in `bundle.repo_decisions` is
-   marked applied (`PgStore.mark_applied`) with the repo record's `applied`
-   block plus `repo_id` and `commit` (a non-terminal record such as `defer`
-   stays pending in the repo; its hosted copy gets just the date). This runs
-   before the staleness pass, so a decision is never marked stale by its own
-   change. `merge_decisions` keeps dropping landed hosted decisions from the
-   merged list, so History shows the repo's `DEC-` record.
-
-The runner's reserved `mode: "apply"` stays unused: applying happens in the
-project's own CI, not on the server.
+   hosted decisions that are not stale (the rest come back in `held`). It
+   appends them to the checkout's `decisions.yaml` with
+   `store.landing.append_hosted` (renumbered to `DEC-`, `origin: {kind: hosted,
+   ref: <H- id>}`) and applies them with the normal apply engine, which runs
+   the project's own checks, all or nothing. The apply's `make regen` also
+   rewrites the snapshot file.
+3. After the merge, the site's next fetch publishes the new snapshot, and
+   `mark_landed` marks those decisions applied.

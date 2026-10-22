@@ -49,7 +49,7 @@ def test_resolve_from_a_full_record_with_stale_votes(client, engine, team, auth_
     from curation_workbench.store.pg import PgStore
     with engine.connect() as conn:
         pid = conn.exec_driver_sql("SELECT id FROM projects").scalar_one()
-        snap = conn.exec_driver_sql("SELECT current_snapshot_id FROM cw_residents").scalar_one()
+        snap = conn.exec_driver_sql("SELECT current_snapshot_id FROM cw_repos").scalar_one()
     PgStore(engine, pid).set_stale("vote", voted[team.voter2.id], snap, "subject_changed")
     rec = decision_body(toy_hash, rationale="curator's own words")
     r = resolve(client, auth_headers(team.curator), outcome="decision", decision=rec)

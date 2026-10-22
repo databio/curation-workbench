@@ -1,6 +1,6 @@
 """Votes and question counts."""
 import pytest
-from .hostedtools import vote_body
+from .hostedtools import decision_body, vote_body
 
 from curation_workbench.hosted.service import projects as project_svc
 from curation_workbench.hosted.service import roles
@@ -61,7 +61,7 @@ def test_stale_votes_are_not_counted(client, engine, team, auth_headers, toy_has
     client.put(T + "/votes", json=vote_body(toy_hash), headers=hv2)
     st = PgStore(engine, _pid(engine))
     with engine.begin() as conn:
-        snap = conn.exec_driver_sql("SELECT current_snapshot_id FROM cw_residents").scalar_one()
+        snap = conn.exec_driver_sql("SELECT current_snapshot_id FROM cw_repos").scalar_one()
     st.set_stale("vote", a["id"], snap, "subject_changed")
     [q] = questions(client, hv)
     assert q["total"] == 1 and q["stale"] == 1
@@ -136,12 +136,10 @@ def test_votes_on_a_resolved_question_are_refused(client, team, auth_headers, to
     assert r.status_code == 409 and r.json()["code"] == "question_resolved"
 
 
-def test_writes_request_a_derive(client, engine, team, auth_headers, toy_hash):
-    with engine.connect() as conn:
-        n0 = conn.exec_driver_sql("SELECT count(*) FROM cw_sync_jobs WHERE kind = 'derive' "
-                                  "AND status = 'queued'").scalar_one()
-    client.put(T + "/votes", json=vote_body(toy_hash), headers=auth_headers(team.voter))
-    with engine.connect() as conn:
-        n1 = conn.exec_driver_sql("SELECT count(*) FROM cw_sync_jobs WHERE kind = 'derive' "
-                                  "AND status = 'queued'").scalar_one()
-    assert (n0, n1) == (0, 1)
+def test_status_is_derived_on_read_after_a_write(client, engine, team, auth_headers, toy_hash):
+    hc = auth_headers(team.curator)
+    state = lambda: client.get(T + "/subject?sid=" + SID, headers=hc).json()["status"]["state"]  # noqa: E731
+    before = state()
+    r = client.post(T + "/decisions", json=decision_body(toy_hash, sid=SID), headers=hc)
+    assert r.status_code == 201, r.text
+    assert before != "settled" and state() == "settled"

@@ -27,7 +27,7 @@ first project; see [Residents](#residents).
 ```bash
 uv venv && uv pip install -e ".[test]"          # tests include the Postgres store's
 uv pip install -e ".[postgres]"                 # hosted store only (SQLAlchemy + psycopg 3)
-uv pip install -e ".[hosted]"                   # hosted mode (store, sync worker, API service)
+uv pip install -e ".[hosted]"                   # hosted mode (store and API service)
 ```
 
 ## Commands
@@ -37,8 +37,8 @@ cwb -c workbench.yaml subjects [--check]   # subjects.json, term_crosswalk.json,
 cwb -c workbench.yaml lint [--check]       # findings/schema_lint.json
 cwb -c workbench.yaml status [--check]     # status.json: state + queue score per subject
 cwb -c workbench.yaml review [--check]     # review.json: queue sorted into review tracks/types
-cwb -c workbench.yaml regen [--check]      # all of the above, in order
-cwb -c workbench.yaml snapshot [--out F]   # the commit-phase bundle as JSON (see below)
+cwb -c workbench.yaml regen [--check]      # all of the above, in order, plus the snapshot file
+cwb -c workbench.yaml snapshot [--out F] [--check]  # the commit-phase bundle (see below)
 cwb derive --snapshot F --decisions D [--out DIR]  # status.json + review.json from a bundle
 cwb -c workbench.yaml pull [PROJECT] [--url URL] [--summary F]  # approved decisions from the site, applied here
 cwb -c workbench.yaml apply [--dry-run] [--ids DEC-0001 ...] [--emit pending.json]  # records already in decisions.yaml
@@ -52,23 +52,18 @@ Regen runs in two phases. `snapshot` computes everything that depends only on
 the repo at one commit (subjects, aliases, lint and plugin findings, every
 queue signal) into one JSON bundle; it is the only place plugin code runs.
 `derive` turns a bundle plus a decision list into status.json and review.json
-with no plugin calls. `cwb regen` is the two in a row; the website's sync
-worker keeps one bundle per commit and re-derives status after every vote or
-decision.
+with no plugin calls. `cwb regen` is the two in a row. With
+`snapshot: curation/snapshot.json` in workbench.yaml, regen also writes the
+bundle there, and the repo commits it: that file is all the website reads.
 
-The website's services (need the `hosted` extra; see `dev-docs/sync.md`):
+The website (needs the `hosted` extra; see `dev-docs/sync.md`):
 
 ```bash
-cwb runner [--port 8150]                     # the isolated runner: all repo code runs here
-cwb hosted worker                            # the sync worker (mirrors repos, publishes snapshots)
-cwb hosted resident add --project onga --repo https://github.com/databio/onga \
-    --branch master --config workbench.yaml --plugin-dir curation/plugin
-cwb hosted resident list | show | check | plugin-diff | approve-plugin --tree T |
-    revoke-plugin | sync [--wait] | update | disable | rotate-webhook-secret <slug>
-cwb hosted isolation-check                   # in the worker task: prove the runner is isolated
 cwb hosted serve [--port 8134] [--reload]    # the hosted API + review UI (uvicorn)
+cwb hosted project add onga --name ONGA --repo https://github.com/databio/onga --branch master
+cwb hosted project list | show <slug> | sync <slug>   # repo, commit, last error; fetch now
 cwb hosted admin add-member --project onga --email E --role voter|curator
-cwb hosted admin dev-snapshot --project toy --config tests/fixtures/toy/workbench.yaml  # dev only
+cwb hosted admin dev-snapshot --project toy --snapshot bundle.json   # dev only
 ```
 
 ## The website
@@ -86,14 +81,19 @@ the same wiring as Pigeon). It is invite-only:
    **voter** or a **curator** (the project's Team page, or
    `cwb hosted admin add-member`).
 
+A superadmin adds a project with the **Add a project** form on the home page
+(short name, name, public GitHub repo, branch) or `cwb hosted project add`.
+
 Team members **vote** on review questions (one subject in one review type);
 **curators** read the vote counts and turn a question into a real decision
 (or close it with no action). Votes never become decisions on their own.
 Decisions made here get `H-NNNN` ids. The schema stays in git and the service
-never edits it, and it holds no git write credentials (see the next section): each project's generated data (the snapshot bundle and the derived
-status and review queue) comes from plan 4's sync worker (`cwb hosted
-worker`, dev-docs/sync.md), which the API reads from Postgres. The API never
-runs plugin code. Agents use API keys (`Authorization: Bearer cwb_...`, made
+never edits it, and it holds no git credentials at all (see the next
+section). Each project's repo builds and commits its snapshot file; the API
+downloads it from GitHub (raw.githubusercontent.com, at the branch head's
+commit) every `CWB_FETCH_SECONDS`, stores it in Postgres, and derives the
+status and review queue from it on read (dev-docs/sync.md). The site never
+imports or runs project code. Agents use API keys (`Authorization: Bearer cwb_...`, made
 on the Settings page) with the scopes `curation:read`, `curation:vote` and
 `curation:decide`. Every route is in `src/curation_workbench/hosted/API.md`.
 
@@ -110,7 +110,7 @@ on the Settings page) with the scopes `curation:read`, `curation:vote` and
 | `FRONTEND_URL`, `ALLOWED_ORIGINS`, `RATE_LIMIT_CLIENT_IP_HEADER` | snapgate redirects, CORS, its login limiter's client IP |
 | `SNAPGATE_SUPERADMIN_EMAILS`, `SNAPGATE_ADMIN_EMAILS` | site roles (browser session only); production needs a superadmin |
 | `DEBUG`, `DEMO_LOGIN` | dev only; refused in production |
-| `CWB_SYNC_DIR`, `CWB_RUNNER_URL`, ... | the sync worker (dev-docs/sync.md) |
+| `CWB_FETCH_SECONDS` | seconds between GitHub checks per project (default 300 in production, off otherwise) |
 
 A production boot refuses `DEMO_LOGIN`/`DEBUG`, snapgate's test secrets, an
 http public URL, an `OIDC_REDIRECT_URI` outside `CWB_PUBLIC_URL`, a
@@ -119,9 +119,9 @@ http public URL, an `OIDC_REDIRECT_URI` outside `CWB_PUBLIC_URL`, a
 ### How decisions reach the repository
 
 1. Curators approve decisions on the site. The **Approved** page lists the
-   ones waiting, holds back any whose item changed since (stale) or that fail
-   the project's checks, links to the repo's Actions workflow and shows the
-   last-synced commit.
+   ones waiting, holds back any whose item changed since (stale), links to
+   the repo's Actions workflow and shows the commit of the current snapshot.
+   The project's own checks run when the Action applies them.
 2. A GitHub Action in the project repo (ONGA's `.github/workflows/curate.yml`,
    by hand or daily) runs `cwb pull <project>` with a read-only API key from
    the repo secret `CURATE_API_KEY`, then opens or updates one pull request
@@ -133,14 +133,14 @@ http public URL, an `OIDC_REDIRECT_URI` outside `CWB_PUBLIC_URL`, a
    refuses (listed in the summary), and applies the rest with `cwb apply`
    (edits, regen, the config's `verify` commands). Nothing is committed; on
    any failure every file goes back. On a laptop it is the same command.
-4. After the pull request is merged, the sync worker publishes the new commit
-   and marks each decision it finds there (by `origin.ref`) as applied, with
-   its `DEC-` id and the commit. The Approved page moves it to "Reached the
+4. After the pull request is merged, the site's next fetch loads the new
+   commit's snapshot and marks each decision it finds there (by `origin.ref`)
+   as applied, with its `DEC-` id and the commit. The Approved page moves it to "Reached the
    repository".
 
 Setting it up for a project: the repo installs curation-workbench in its
-Action (ONGA clones `https://github.com/databio/curation-workbench`, which
-must be public); the repo allows Actions to create pull requests (Settings ->
+Action (ONGA clones `https://github.com/databio/curation-workbench`, which is
+public); the repo allows Actions to create pull requests (Settings ->
 Actions -> General); a curator clicks **Make a key for the repository** on the
 Approved page (a `curation:read` key) and stores it as the repo secret
 `CURATE_API_KEY`. The key belongs to that curator: it stops working if they
@@ -155,36 +155,34 @@ instead of Prosopia:
 uv venv && uv pip install -e ".[hosted,test]"
 npm --prefix frontend ci && npm --prefix frontend run build
 scripts/dev-db.sh start
-export CWB_ENV=dev CWB_DATABASE_URL="$(scripts/dev-db.sh url)" CWB_SYNC_DIR=var/sync \
+export CWB_ENV=dev CWB_DATABASE_URL="$(scripts/dev-db.sh url)" \
        DEMO_LOGIN=true SNAPGATE_SUPERADMIN_EMAILS=admin@demo.local \
        JWT_SECRET_KEY=dev-only-0123456789abcdef0123456789 SESSION_SECRET_KEY=dev-only-abcdef0123456789abcdef0123 \
        FRONTEND_URL=http://127.0.0.1:8134 ALLOWED_ORIGINS=http://127.0.0.1:8134,http://127.0.0.1:5190
 cwb db migrate
 cwb db project add toy --name "Toy schema"
-cwb hosted admin dev-snapshot --project toy --config tests/fixtures/toy/workbench.yaml
-cwb hosted worker &                         # re-derives the queue after each vote or decision
+cwb -c tests/fixtures/toy/workbench.yaml snapshot --out var/toy-snapshot.json
+cwb hosted admin dev-snapshot --project toy --snapshot var/toy-snapshot.json
 cwb hosted serve --reload --port 8134       # http://127.0.0.1:8134/ (API docs at /docs)
 # sign in: POST /auth/demo-login/admin (the SPA's /login uses Prosopia), then add yourself:
 cwb hosted admin add-member --project toy --email admin@demo.local --role curator
 ```
 
-`dev-snapshot` is the worker's stand-in for a local folder: it builds the
-snapshot in-process and publishes it to a disabled `dev:<path>` resident
-exactly as a real sync does. To try real Prosopia sign-in locally, set the
+`dev-snapshot` stands in for GitHub: it publishes a local snapshot file to the
+project under a `dev:` repo that is never fetched, exactly as a real fetch
+publishes. To try real Prosopia sign-in locally, set the
 `OIDC_*` variables to the `curate` Prosopia client (its redirect URIs include
 `http://127.0.0.1:8134/auth/login/callback`) and drop `DEMO_LOGIN`.
 Tests: `scripts/test-postgres.sh` runs `tests/hosted/` (every hosted test
 needs a database).
 
-To try a real repository end to end, register a resident that points at a
-local bare clone (`CWB_ALLOW_FILE_REPOS=1 cwb hosted resident add --repo
-file:///path/to/clone.git ...`), run the worker and the runner (`cwb runner`,
-`CWB_RUNNER_URL=http://127.0.0.1:8150`), and run `cwb pull` in a checkout of
-that clone with `CWB_URL=http://127.0.0.1:8134` and a key made on the
+To try a real public repository, register it (`cwb hosted project add`, or the
+form on the home page) and set `CWB_FETCH_SECONDS=60`; to try `cwb pull`, run
+it in a checkout with `CWB_URL=http://127.0.0.1:8134` and a key made on the
 Approved page.
 
 **Hosted deploy.** The service runs at https://curate.databio.org on goat (one
-image, three services: API, sync worker, isolated runner). The image,
+image, one service: the API, which also fetches project snapshots). The image,
 stack wiring, verifier and the first-deploy checklist are in
 [`deployment/deploy.md`](deployment/deploy.md).
 
@@ -226,6 +224,8 @@ review_types: null          # path relative to this file; default curation/revie
 plugins: []                 # modules importable from this file's folder
 plugin_dir: null            # folder (relative to this file) holding the plugin modules
                             # and their helpers; when set, plugins import from it only
+snapshot: curation/snapshot.json   # where regen writes the bundle the website reads;
+                            # commit it (default null: not written)
 options:                    # read by generic rules and signals
   adoption_root: class:File          # queue signal: reachable from this class
   import_source_prefix: null         # classes whose `source:` starts with this are "ported"
@@ -277,13 +277,9 @@ while they run, `wb.snapshot_view` is `{subjects, labels, signals}` (signals
 unmasked, no decisions). Their output rides in the bundle, so derive and the
 website's API run no plugin code.
 
-**Hosted mode** (plugins run only in the isolated runner, and only from a
-plugin tree a superadmin approved): `plugin_dir` is required when `plugins`
-is non-empty; each plugin must be a module file directly in it, and helper
-modules it imports must sit beside it (and be imported at module top level);
-every config path must stay inside the repo; `apply:` and `wb.regen` are
-ignored with a warning. Plugins may import only the standard
-library, `yaml`, `ruamel.yaml` and `curation_workbench`.
+Plugins run only where the project's own tooling runs (`cwb regen` on a laptop
+or in the project's CI). The website reads their results from the committed
+snapshot file and never loads a plugin.
 
 ## Review UI
 
@@ -381,8 +377,8 @@ input.
 
 **Migrations** live in `deployment/migrations/` (override: `CWB_MIGRATIONS_DIR`),
 one numbered file each, applied once by `cwb db migrate` and recorded in
-`schema_migrations`. Before the first production deploy, fix a mistake by
-editing the owning file and recreating the dev database; after it, only add files.
+`schema_migrations`. Migrations already applied on goat (001, 010-013, 020-022, 040, 090) are
+frozen: change the schema only by adding a numbered file.
 
 | Numbers | Owner | Files |
 |---|---|---|
@@ -390,7 +386,7 @@ editing the owning file and recreating the dev database; after it, only add file
 | `010-019` | storage | `010_projects.sql`, `011_decisions.sql`, `012_votes.sql`, `013_decision_votes.sql` |
 | `020-029` | hosted service | team members, question resolutions, user foreign keys |
 | `030-039` | free | |
-| `040-049` | sync worker | `040_residents_sync.sql` (residents, plugin approvals, snapshots, derived status, sync jobs, stale events) |
+| `040-049` | project repos | `040_residents_sync.sql` (superseded), `041_repo_snapshots.sql` (repos, snapshots, stale events) |
 | `090-099` | hosted service | snapgate upgrades |
 
 ## Residents
@@ -404,8 +400,12 @@ helper `curation/plugin/onga_mappings.py`, and `curation/review_types.yaml`.
 ONGA depends on this repo as a path dependency (`../curation-workbench`), and
 its `make test` is the guard: its committed outputs are the golden files.
 
-`tests/test_onga.py` runs the same `--check`s from here, plus the review UI's
-read bodies and an apply dry run on a disposable worktree:
+ONGA commits `curation/snapshot.json` (`snapshot:` in its workbench.yaml;
+`make regen` writes it, `make test` checks it); that file is what
+curate.databio.org shows. `tests/test_onga.py` runs the same `--check`s from
+here, checks that the site's review over the committed snapshot equals ONGA's
+committed review.json, and runs the review UI's read bodies and an apply dry
+run on a disposable worktree:
 
 ```bash
 ONGA_ROOT=../onga pytest -q tests/test_onga.py                 # read-only

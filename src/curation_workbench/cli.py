@@ -4,8 +4,10 @@
     cwb -c workbench.yaml lint [--check]         schema lint findings
     cwb -c workbench.yaml status [--check]       state + queue score per subject
     cwb -c workbench.yaml review [--check]       queue items sorted into review tracks/types
-    cwb -c workbench.yaml regen [--check]        subjects, lint, status, review, in order
-    cwb -c workbench.yaml snapshot [--out F]     the commit-phase bundle as JSON (stdout or F)
+    cwb -c workbench.yaml regen [--check]        subjects, lint, status, review (and the
+                                                 snapshot file, when workbench.yaml sets one)
+    cwb -c workbench.yaml snapshot [--out F] [--check]   the commit-phase bundle as JSON (to
+                                                 workbench.yaml's `snapshot:` path, F or stdout)
     cwb derive --snapshot F --decisions D [--out DIR]   status.json + review.json from a bundle
     cwb -c workbench.yaml apply [--dry-run] [--ids DEC-0001 ...]   apply records already in decisions.yaml
     cwb -c workbench.yaml pull [PROJECT] [--url URL] [--summary F]  fetch approved decisions from
@@ -16,17 +18,15 @@
     cwb db project add <slug> --name NAME        create a hosted project
     cwb db export --project SLUG --template decisions.yaml -o OUT [--ids H-0001 ...]
 
-    cwb runner [--host H] [--port 8150]          the isolated runner (plugin code runs here only)
-    cwb hosted worker                            the sync worker (needs the hosted extra)
-    cwb hosted resident add|list|show|...        resident projects (superadmin operator)
-    cwb hosted isolation-check                   prove the runner is isolated
-    cwb hosted serve [--port 8134] [--reload]    the hosted API + review UI
+    cwb hosted serve [--port 8134] [--reload]    the hosted API + review UI (needs the hosted extra)
+    cwb hosted project add SLUG --name N --repo owner/name [--branch B]   register a project
+    cwb hosted project list | show SLUG | sync SLUG                       its repo and snapshot
     cwb hosted admin add-member --project S --email E --role voter|curator
-    cwb hosted admin dev-snapshot --project S --config workbench.yaml   (dev only)
+    cwb hosted admin dev-snapshot --project S --snapshot F   (dev only)
 
 Global flags: -c/--config (default ./workbench.yaml), --root (project tree;
 overrides the config), --out (where generated files go; default the curation dir).
-`cwb db`, `cwb derive`, `cwb runner` and `cwb hosted` need no workbench.yaml;
+`cwb db`, `cwb derive` and `cwb hosted` need no workbench.yaml;
 the database commands read CWB_DATABASE_URL (or POSTGRES_DB/USER/PASSWORD/HOST/PORT)
 and need the `postgres` extra.
 """
@@ -37,7 +37,7 @@ from pathlib import Path
 from .workbench import Workbench
 
 
-NO_WORKBENCH = ("db", "derive", "runner", "hosted")
+NO_WORKBENCH = ("db", "derive", "hosted")
 
 
 def _write(files, check, label):
@@ -120,23 +120,31 @@ def cmd_regen(wb, args):
         r = _write({wb.cfg.output("review.json"): review.dump(rv)}, args.check, "review")
         print(f"review: {review.summary(rv)}" + (up if args.check and not r else ""))
         rc |= r
+    if wb.cfg.snapshot is not None:
+        r = _write({wb.cfg.snapshot: snapshot.dump(bundle)}, args.check, "snapshot")
+        print(f"snapshot: {wb.cfg.rel(wb.cfg.snapshot)}" + (up if args.check and not r else ""))
+        rc |= r
     for fn in wb.regen:
         fn(wb, wb.cfg.out)
     return rc
 
 
 def cmd_snapshot(wb, args):
+    """The bundle to --out, else workbench.yaml's `snapshot:` path, else stdout."""
     from . import snapshot, subjects
     try:
-        text = snapshot.dumps(snapshot.build(wb))
+        bundle = snapshot.build(wb)
     except subjects.RegistryError as e:
         sys.exit(f"SUBJECT REGISTRY FAILED: {e}")
-    if args.file:
-        Path(args.file).write_text(text)
-        print(f"snapshot: wrote {args.file}")
-    else:
-        sys.stdout.write(text)
-    return 0
+    path = Path(args.file) if args.file else wb.cfg.snapshot
+    if path is None:
+        if args.check:
+            sys.exit("cwb snapshot --check needs --out or a `snapshot:` path in workbench.yaml")
+        sys.stdout.write(snapshot.dump(bundle))
+        return 0
+    rc = _write({path.resolve(): snapshot.dump(bundle)}, args.check, "snapshot")
+    print(f"snapshot: {wb.cfg.rel(path.resolve())}" + (" (up to date)" if args.check and not rc else ""))
+    return rc
 
 
 def _read_bundle(path):
@@ -179,11 +187,6 @@ def cmd_derive(_, args):
     return 0
 
 
-def cmd_runner(_, args):
-    from . import runner
-    return runner.main(["--host", args.host, "--port", str(args.port)])
-
-
 def cmd_apply(wb, args):
     from . import apply
     return apply.main(wb, dry_run=args.dry_run, ids=args.ids or None, emit_path=args.emit)
@@ -213,7 +216,7 @@ def _engine(pg):
 
 
 def _extra_metadata():
-    # Plans 2 and 4 register their table metadata here (loaded lazily, only
+    # The hosted service registers its table metadata here (loaded lazily, only
     # when the `hosted` extra is installed) so the drift check covers every table.
     out = []
     try:
@@ -316,7 +319,9 @@ def main(argv=None):
     p.add_argument("--summary", metavar="PATH", help="also write a Markdown summary (the PR body)")
     p.set_defaults(fn=cmd_pull)
     p = sub.add_parser("snapshot", help="write the commit-phase bundle as JSON")
-    p.add_argument("--out", dest="file", help="write the bundle here instead of stdout")
+    p.add_argument("--out", dest="file",
+                   help="write the bundle here (default: workbench.yaml's `snapshot:`, else stdout)")
+    p.add_argument("--check", action="store_true", help="write nothing; exit 1 if stale")
     p.set_defaults(fn=cmd_snapshot)
     p = sub.add_parser("derive", help="status.json and review.json from a bundle and decisions")
     p.add_argument("--snapshot", required=True, help="bundle JSON (from `cwb snapshot`; may be gzip)")
@@ -324,10 +329,6 @@ def main(argv=None):
                    help="JSON list of decision records, or a decisions.yaml")
     p.add_argument("--out", dest="out_dir", default=".", help="folder to write to (default: here)")
     p.set_defaults(fn=cmd_derive)
-    p = sub.add_parser("runner", help="the isolated runner (HTTP, one job at a time)")
-    p.add_argument("--host", default="0.0.0.0")
-    p.add_argument("--port", type=int, default=8150)
-    p.set_defaults(fn=cmd_runner)
     _db_parser(sub)
     from .hosted import cli as hosted_cli
     hosted_cli.add_parser(sub)

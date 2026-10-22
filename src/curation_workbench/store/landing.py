@@ -4,8 +4,8 @@ Decisions are made on the hosted site (`H-NNNN`, Postgres). They reach a
 project's repo when `cwb pull` (run by hand or by the repo's GitHub Action)
 appends them to `curation/decisions.yaml`, renumbered into the file's `DEC-`
 sequence, and the apply engine applies them. Each keeps
-`origin: {kind: hosted, ref: <its H- id>}`; that ref is how the sync worker
-later recognizes it and marks the hosted copy applied.
+`origin: {kind: hosted, ref: <its H- id>}`; that ref is how the website
+later recognizes it (in the repo's next snapshot) and marks the hosted copy applied.
 
 Plain Python only (no SQLAlchemy), so `cwb pull` runs on a base install.
 

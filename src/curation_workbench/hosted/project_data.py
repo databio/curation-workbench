@@ -1,12 +1,13 @@
-"""A hosted project's data, read from plan 4's tables. Never files, git or plugin code.
+"""A hosted project's data: its current snapshot plus status and review derived
+on read. Never files, git or plugin code.
 
-`load(conn, slug)` -> `ProjectData`: the project row, its resident's current
-snapshot (`cw_snapshots.bundle`, decoded and cached in process memory by
-snapshot id; snapshots are immutable) and the derived status/review
-(`cw_derived`, read fresh on every request: it changes on every vote). No
-resident or no current snapshot raises `NotSynced` (503 `not_synced`).
-`context(pd)` is the `ValidationContext` every hosted write validates against
-(plugin decision checks are the worker's asynchronous `decision_checks`).
+`load(conn, slug)` -> `ProjectData`: the project row, the current snapshot's
+bundle (from `cw_snapshots`, cached in memory by snapshot id; snapshots never
+change) and status/review from `derive` over the bundle and the merged
+decisions. Derived data is cached by (snapshot id, `decisions_rev`): every
+decision write bumps the rev, and a derive takes milliseconds. No repo or no
+snapshot yet raises `NotSynced` (503 `not_synced`). `context(pd)` is the
+`ValidationContext` every hosted write validates against.
 """
 from __future__ import annotations
 
@@ -17,31 +18,32 @@ from dataclasses import dataclass
 from snapgate import NotFound
 from sqlalchemy import select
 
+from .. import derive
 from ..store import Subjects, ValidationContext
+from ..store.pg import PgStore
 from ..store.pg.tables import projects
 from .service.errors import NotSynced
-from .sync.publish import decode_bundle
-from .sync.tables import cw_derived, cw_residents, cw_snapshots
+from .sync import publish
+from .sync.repos import repo_info
 
-_CACHE_SIZE = 8
-_cache: OrderedDict[int, tuple[dict, Subjects]] = OrderedDict()
+_CACHE_SIZE = 16
+_derived: OrderedDict[tuple, tuple] = OrderedDict()
+_subjects: dict[int, Subjects] = {}
 _lock = threading.Lock()
 
 
 @dataclass(frozen=True)
 class ProjectData:
     project: dict
-    resident_id: int
     snapshot_id: int
     commit: str
     branch: str
-    repo_url: str
+    repo: str
     schema_fingerprint: str
     synced_at: str
     bundle: dict
     status: dict
     review: dict | None
-    decision_checks: dict
     subjects: Subjects
 
 
@@ -54,57 +56,55 @@ def project_row(conn, slug, include_archived=False) -> dict | None:
     return dict(row._mapping) if row else None
 
 
-def _bundle(conn, snapshot_id):
-    with _lock:
-        hit = _cache.get(snapshot_id)
-        if hit is not None:
-            _cache.move_to_end(snapshot_id)
-            return hit
-    data = conn.execute(select(cw_snapshots.c.bundle)
-                        .where(cw_snapshots.c.id == snapshot_id)).scalar_one()
-    bundle = decode_bundle(data)
-    entry = (bundle, Subjects(bundle["subjects"]))
-    with _lock:
-        _cache[snapshot_id] = entry
-        while len(_cache) > _CACHE_SIZE:
-            _cache.popitem(last=False)
-    return entry
-
-
 def sync_info(conn, project_id) -> dict:
-    """{resident_id, snapshot_id, commit, branch, repo_url, schema_fingerprint,
-    synced_at}; all None before the first sync."""
-    row = conn.execute(
-        select(cw_residents.c.id, cw_residents.c.branch, cw_residents.c.repo_url,
-               cw_residents.c.current_snapshot_id,
-               cw_snapshots.c.commit_sha, cw_snapshots.c.schema_fingerprint, cw_snapshots.c.created_at)
-        .select_from(cw_residents.outerjoin(cw_snapshots,
-                                            cw_snapshots.c.id == cw_residents.c.current_snapshot_id))
-        .where(cw_residents.c.project_id == project_id)).one_or_none()
-    if row is None:
-        return {"resident_id": None, "snapshot_id": None, "commit": None, "branch": None,
-                "repo_url": None, "schema_fingerprint": None, "synced_at": None}
-    return {"resident_id": row.id, "snapshot_id": row.current_snapshot_id, "commit": row.commit_sha,
-            "branch": row.branch, "repo_url": row.repo_url, "schema_fingerprint": row.schema_fingerprint,
-            "synced_at": row.created_at.isoformat() if row.created_at else None}
+    """{repo, branch, snapshot_id, commit, schema_fingerprint, synced_at,
+    last_checked_at, last_error, warnings}; None values before the first fetch."""
+    return repo_info(conn, project_id)
+
+
+def _subjects_of(snapshot_id, bundle) -> Subjects:
+    with _lock:
+        s = _subjects.get(snapshot_id)
+        if s is None:
+            if len(_subjects) > _CACHE_SIZE:
+                _subjects.clear()
+            s = _subjects[snapshot_id] = Subjects(bundle["subjects"])
+        return s
+
+
+def derived(conn, project_id, snapshot_id, bundle) -> tuple[dict, dict | None]:
+    """(status, review) for the snapshot and the project's decisions now."""
+    store = PgStore(conn.engine, project_id)
+    with store.using(conn):
+        snap = store.snapshot()          # reads the rev before the records
+    key = (snapshot_id, snap["token"])
+    with _lock:
+        hit = _derived.get(key)
+        if hit is not None:
+            _derived.move_to_end(key)
+            return hit
+    decisions = derive.merge_decisions(bundle.get("repo_decisions") or [], snap["decisions"])
+    st = derive.status(bundle, decisions)
+    rv = derive.review(bundle, st, f"H-{int(snap['next_id']):04d}")
+    with _lock:
+        _derived[key] = (st, rv)
+        while len(_derived) > _CACHE_SIZE:
+            _derived.popitem(last=False)
+    return st, rv
 
 
 def load_for(conn, project: dict) -> ProjectData:
     info = sync_info(conn, project["id"])
     if info["snapshot_id"] is None:
-        raise NotSynced(f"project {project['slug']} has no published snapshot yet")
-    derived = conn.execute(select(cw_derived.c.status, cw_derived.c.review,
-                                  cw_derived.c.decision_checks)
-                           .where(cw_derived.c.resident_id == info["resident_id"])).one_or_none()
-    if derived is None:
-        raise NotSynced(f"project {project['slug']} has no derived status yet")
-    bundle, subjects = _bundle(conn, info["snapshot_id"])
-    return ProjectData(project=project, resident_id=info["resident_id"],
-                       snapshot_id=info["snapshot_id"], commit=info["commit"], branch=info["branch"],
-                       repo_url=info["repo_url"],
+        raise NotSynced(f"project {project['slug']} has no snapshot yet"
+                        + (f" ({info['last_error']})" if info["last_error"] else ""))
+    bundle = publish.load_bundle(conn, info["snapshot_id"])
+    st, rv = derived(conn, project["id"], info["snapshot_id"], bundle)
+    return ProjectData(project=project, snapshot_id=info["snapshot_id"], commit=info["commit"],
+                       branch=info["branch"], repo=info["repo"],
                        schema_fingerprint=info["schema_fingerprint"], synced_at=info["synced_at"],
-                       bundle=bundle, status=derived.status, review=derived.review,
-                       decision_checks=derived.decision_checks or {}, subjects=subjects)
+                       bundle=bundle, status=st, review=rv,
+                       subjects=_subjects_of(info["snapshot_id"], bundle))
 
 
 def load(conn, slug) -> ProjectData:
@@ -123,8 +123,11 @@ def context(pd: ProjectData) -> ValidationContext:
 
 
 def clear_cache():
+    publish.clear_cache()
     with _lock:
-        _cache.clear()
+        _derived.clear()
+        _subjects.clear()
 
 
-__all__ = ["ProjectData", "clear_cache", "context", "load", "load_for", "project_row", "sync_info"]
+__all__ = ["ProjectData", "clear_cache", "context", "derived", "load", "load_for", "project_row",
+           "sync_info"]

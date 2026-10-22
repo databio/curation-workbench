@@ -57,15 +57,12 @@ def project(pg_engine):
 
 @pytest.fixture
 def snap(project):
-    """A real cw_snapshots id (040 adds the stale columns' foreign key to it)."""
+    """A real cw_snapshots id (041 gives the stale columns a foreign key to it)."""
     with project.engine.begin() as conn:
-        rid = conn.execute(text("INSERT INTO cw_residents (project_id, repo_url, branch) "
-                                "VALUES (:p, 'dev:/x', 'dev') RETURNING id"),
-                           {"p": project.project_id}).scalar_one()
-        return conn.execute(text("INSERT INTO cw_snapshots (resident_id, commit_sha, "
+        return conn.execute(text("INSERT INTO cw_snapshots (project_id, commit_sha, "
                                  "schema_fingerprint, bundle, bundle_sha256) "
-                                 "VALUES (:r, 'c', 'f', '\\x00', 'h') RETURNING id"),
-                            {"r": rid}).scalar_one()
+                                 "VALUES (:p, 'c', 'f', '\\x00', 'h') RETURNING id"),
+                            {"p": project.project_id}).scalar_one()
 
 
 @pytest.fixture
@@ -89,7 +86,7 @@ def test_migrations(pg_engine):
     assert files == ["001_snapgate.sql", "010_projects.sql", "011_decisions.sql", "012_votes.sql",
                      "013_decision_votes.sql", "020_project_members.sql",
                      "021_question_resolutions.sql", "022_user_fks.sql", "040_residents_sync.sql",
-                     "090_snapgate_useradmin.sql"]
+                     "041_repo_snapshots.sql", "090_snapgate_useradmin.sql"]
     with pg_engine.connect() as conn:
         ledger = sorted(r[0] for r in conn.execute(text("SELECT filename FROM schema_migrations")))
     assert ledger == files

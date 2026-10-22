@@ -163,8 +163,6 @@ export interface Decision extends DecisionDraft {
   /** The item changed since the decision was made (it is held back). */
   stale?: boolean;
   stale_reason?: string | null;
-  /** The project's checks that this decision fails. */
-  plugin_errors?: string[];
 }
 
 export interface Panel {

@@ -6,7 +6,7 @@ from snapgate.useradmin import NotAdmin, SessionRequired
 
 
 class NotSynced(ServiceError):
-    """503: the project has no published snapshot yet (plan 4's worker)."""
+    """503: the project has no snapshot yet (its repo was not fetched, or failed)."""
     status, code = 503, "not_synced"
 
 

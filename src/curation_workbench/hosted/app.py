@@ -7,7 +7,9 @@ lives in `hosted.asgi`.
 Middleware order (snapgate canonical): SessionMiddleware (OAuth state/PKCE),
 SlowAPIMiddleware (snapgate's login limits), CORSMiddleware. The lifespan
 refuses to start on schema drift (`assert_schema_current` over every table:
-plan 1's, snapgate's, this package's and the sync worker's).
+plan 1's, snapgate's, this package's and the repo snapshot tables). It also
+starts the repo poller (`sync.repos.Poller`, every `CWB_FETCH_SECONDS`), which
+fetches each project's committed snapshot from GitHub.
 """
 from __future__ import annotations
 
@@ -50,13 +52,13 @@ them; the superadmin then puts each person on a project's curation team as a
 **voter** or a **curator**. Voters vote on review questions; curators read the
 tallies and turn them into decisions. Votes never become decisions on their own.
 
-**Auth.** Every `/api/v1` route (except the GitHub webhook) needs a browser
+**Auth.** Every `/api/v1` route needs a browser
 session or `Authorization: Bearer cwb_<key>` (Settings -> API keys).
 
 **Scopes.** A key holds some of these (a browser session holds all):
 `curation:read`, `curation:vote` (includes read), `curation:decide` (includes
-read; curators only). A missing scope is 403 `insufficient_scope`. Project,
-team and resident admin is superadmin-session only.
+read; curators only). A missing scope is 403 `insufficient_scope`. Project
+and team admin is superadmin-session only.
 
 **Errors.** `{"detail": "...", "code": "snake_case"}`; store errors add
 `errors` (every message) and, on a 409, `current`.
@@ -82,7 +84,15 @@ async def _lifespan(app: FastAPI):
         n = cleanup_expired_codes(session)
         if n:
             logger.info("startup: removed %d expired exchange codes", n)
+    poller = None
+    seconds = app.state.settings.fetch_interval
+    if seconds:
+        from .sync.repos import Poller
+        poller = Poller(engine, seconds).start()
+        logger.info("repo poller started: every %d s", seconds)
     yield
+    if poller is not None:
+        poller.stop()
     try:
         with Session(engine) as session:
             cleanup_expired_codes(session)

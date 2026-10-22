@@ -49,6 +49,24 @@ def test_cli_snapshot_and_derive(toy, tmp_path, capsys):
     assert (dest / "status.json").read_text() == (toy / "curation" / "status.json").read_text()
 
 
+def test_regen_writes_the_committed_snapshot_file(toy, capsys):
+    """With `snapshot:` in workbench.yaml, regen writes the bundle there (what
+    the website downloads), `--check` guards it, and `cwb snapshot` matches."""
+    cfg = toy / "workbench.yaml"
+    cfg.write_text(cfg.read_text() + "snapshot: curation/snapshot.json\n")
+    path = toy / "curation" / "snapshot.json"
+    assert cli.main(["-c", str(cfg), "regen"]) == 0
+    bundle = snapshot.check_format(json.loads(path.read_text()))
+    assert bundle == snapshot.build(Workbench.open(cfg))
+    assert cli.main(["-c", str(cfg), "snapshot", "--check"]) == 0
+    assert cli.main(["-c", str(cfg), "regen", "--check"]) == 0
+    path.write_text("{}\n")
+    assert cli.main(["-c", str(cfg), "snapshot", "--check"]) == 1
+    assert cli.main(["-c", str(cfg), "regen", "--check"]) == 1
+    assert cli.main(["-c", str(cfg), "snapshot"]) == 0
+    assert cli.main(["-c", str(cfg), "regen", "--check"]) == 0
+
+
 def test_signal_cannot_read_decisions(toy):
     (toy / "peek.py").write_text(
         "def register(wb):\n    wb.signals['peek'] = lambda ctx: dict(ctx.last_terminal)\n")

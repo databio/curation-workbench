@@ -72,7 +72,7 @@ def test_cli_add_member(engine, toy_project, make_user, capsys, monkeypatch):
     monkeypatch.setattr("curation_workbench.hosted.cli._engine", lambda: engine)
     assert cli.main(["hosted", "admin", "add-member", "--project", "toy", "--email",
                      "CLI@example.org", "--role", "curator"]) == 0
-    assert "Cli <cli@example.org> is a curator on toy" in capsys.readouterr().out
+    assert f"account {u.id} is a curator on toy" in capsys.readouterr().out
     p = make_user("pend@example.org", status=UserStatus.PENDING)
     with pytest.raises(SystemExit, match="account_not_approved"):
         cli.main(["hosted", "admin", "add-member", "--project", "toy", "--email", p.email,

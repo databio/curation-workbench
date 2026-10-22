@@ -3,8 +3,7 @@
 Each function checks read access, loads the project's published data
 (`project_data.load_for`) and calls a `curation_workbench.views` function,
 with `records` = `derive.merge_decisions(repo
-decisions from the snapshot, hosted decisions)`. Hosted records carry
-`plugin_errors` from the worker's `decision_checks`.
+decisions from the snapshot, hosted decisions)`.
 """
 from __future__ import annotations
 
@@ -13,11 +12,8 @@ from snapgate import Caller, NotFound
 from ... import derive, views
 from ...store.pg import PgStore
 from .. import project_data
+from ..sync.repos import repo_web_url
 from . import roles
-
-
-def with_plugin_errors(records, checks) -> list[dict]:
-    return [{**r, "plugin_errors": list((checks or {}).get(r["id"]) or [])} for r in records]
 
 
 def _read(engine, caller, slug, fn):
@@ -30,7 +26,7 @@ def _read(engine, caller, slug, fn):
 def hosted_records(conn, pd) -> list[dict]:
     store = PgStore(conn.engine, pd.project["id"])
     with store.using(conn):
-        return with_plugin_errors(store.records(), pd.decision_checks)
+        return store.records()
 
 
 def all_records(conn, pd) -> list[dict]:
@@ -90,26 +86,22 @@ RECENT_APPLIED = 20
 
 
 def repository(pd) -> dict:
-    """Where approved decisions go: the resident's repo, its Actions workflow
-    page (github.com only) and the commit the site last synced."""
-    url = str(pd.repo_url or "")
-    web = url[:-4] if url.endswith(".git") else url
-    github = web.startswith("https://github.com/") and web.count("/") == 4
-    return {"url": web if web.startswith("https://") else None,
-            "workflow_url": f"{web}/actions/workflows/{WORKFLOW_FILE}" if github else None,
-            "commit": pd.commit, "commit_url": f"{web}/commit/{pd.commit}" if github and pd.commit else None,
+    """Where approved decisions go: the project's GitHub repo, its Actions
+    workflow page and the commit the site last loaded."""
+    web = repo_web_url(pd.repo)
+    return {"url": web,
+            "workflow_url": f"{web}/actions/workflows/{WORKFLOW_FILE}" if web else None,
+            "commit": pd.commit, "commit_url": f"{web}/commit/{pd.commit}" if web and pd.commit else None,
             "branch": pd.branch, "synced_at": pd.synced_at}
 
 
 def pending(engine, caller: Caller, slug: str) -> dict:
-    """Approved hosted decisions waiting to reach the repo, with the worker's
-    plugin check errors (`views.pending_view`; no `files`: the site never runs
-    the apply engine), plus `applied` (the latest hosted decisions the repo now
+    """Approved hosted decisions waiting to reach the repo (`views.pending_view`;
+    no `files`: the site never runs the apply engine), plus `applied` (the latest hosted decisions the repo now
     holds, newest first) and `repository` (where they go)."""
     def fn(conn, pd):
-        errors = {k: list(v) for k, v in (pd.decision_checks or {}).items() if v}
         records = hosted_records(conn, pd)
-        body = views.pending_view(records, errors=errors)
+        body = views.pending_view(records)
         body.pop("files", None)
         applied = [r for r in records if r.get("status") == "applied"]
         applied.sort(key=lambda r: ((r.get("applied") or {}).get("on") or "", r["id"]), reverse=True)
@@ -121,4 +113,4 @@ def pending(engine, caller: Caller, slug: str) -> dict:
 
 __all__ = ["WORKFLOW_FILE", "all_records", "findings", "history", "hosted_records", "pending",
            "repository", "review_index",
-           "review_type", "subject", "subject_index", "verdicts", "with_plugin_errors"]
+           "review_type", "subject", "subject_index", "verdicts"]

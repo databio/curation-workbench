@@ -3,7 +3,9 @@
 // documented response key.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { CurationError } from '../src/api/backend';
-import { canFor, createHostedBackend, type HostedProject, type Me } from '../src/api/hosted';
+import {
+  adminCreateProject, adminListProjects, adminSyncProject, canFor, createHostedBackend, type HostedProject, type Me,
+} from '../src/api/hosted';
 import type { Action, Decision, DecisionDraft } from '../src/api/types';
 import { ACCESS_TOKEN_KEY } from '../src/snapgate';
 
@@ -147,5 +149,27 @@ describe('hosted backend', () => {
     expect(canFor(ME, 'onga')).toEqual({ vote: true, decide: true, adminTeam: false, adminAccounts: false });
     expect(canFor({ ...ME, memberships: { onga: 'voter' } }, 'onga')).toMatchObject({ vote: true, decide: false });
     expect(canFor({ ...ME, memberships: {}, site_role: 'superadmin' }, 'onga')).toMatchObject({ vote: false, decide: false, adminTeam: true, adminAccounts: true });
+  });
+});
+
+describe('admin projects', () => {
+  it('registers a project with its repo, and fetches it now', async () => {
+    const calls: { method: string; path: string; body: unknown }[] = [];
+    const row = { slug: 'p', name: 'P', archived_at: null, repo: 'o/r', branch: 'master', commit: 'c', synced_at: null,
+      last_checked_at: null, last_error: null, members: 0 };
+    const fetchImpl = vi.fn(async (path: string, init: RequestInit) => {
+      calls.push({ method: init.method ?? 'GET', path, body: init.body ? JSON.parse(String(init.body)) : undefined });
+      const body = path === '/api/v1/admin/projects' && init.method === 'GET' ? { projects: [row] } : { project: row };
+      return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }) as unknown as typeof fetch;
+    const p = { slug: 'p', name: 'P', repo: 'https://github.com/o/r', branch: 'master' };
+    expect(await adminCreateProject(p, fetchImpl)).toEqual(row);
+    expect(await adminSyncProject('p', fetchImpl)).toEqual(row);
+    expect(await adminListProjects(fetchImpl)).toEqual([row]);
+    expect(calls).toEqual([
+      { method: 'POST', path: '/api/v1/admin/projects', body: p },
+      { method: 'POST', path: '/api/v1/admin/projects/p/sync', body: undefined },
+      { method: 'GET', path: '/api/v1/admin/projects', body: undefined },
+    ]);
   });
 });

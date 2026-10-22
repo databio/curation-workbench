@@ -1,9 +1,6 @@
-# Curation workbench: one image for three services: the API + SPA
-# (`cwb hosted serve`, port 8134), the sync worker (`cwb hosted worker`) and the
-# isolated plugin runner (`cwb runner --port 8150`). Project plugin code runs
-# only in the runner, in a container with no secrets, no route out and a
-# read-only root; the worker sends it each job over HTTP. The worker needs git
-# (it fetches project repos over HTTPS). The swarm stack file and deploy script
+# Curation workbench: one service, the API + SPA (`cwb hosted serve`, port
+# 8134). It reads each project's committed snapshot file from GitHub over
+# HTTPS and never runs project code. The swarm stack file and deploy script
 # live in cloud-management/gcp/compute (`deploy.sh curate`); deployment/deploy.md
 # is the runbook.
 #
@@ -27,7 +24,7 @@ RUN npm --prefix frontend run build && test -f /build/src/curation_workbench/web
 FROM ${PYTHON_BASE}
 
 RUN apt-get update \
- && apt-get install -y --no-install-recommends git ca-certificates \
+ && apt-get install -y --no-install-recommends ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 
 # uv makes the venv and installs (an exact uv tag, never latest).
@@ -65,20 +62,13 @@ RUN ls /app/deployment/migrations/010_projects.sql /app/deployment/migrations/00
 # only replica.
 COPY deployment/healthcheck.py /app/deployment/healthcheck.py
 
-# Unprivileged runtime user (uid 1000:1000); all three services run as this
-# user. No setuid/setgid programs: Swarm cannot set no-new-privileges, so
-# nothing in the image may raise privileges.
+# Unprivileged runtime user (uid 1000:1000). No setuid/setgid programs: Swarm
+# cannot set no-new-privileges, so nothing in the image may raise privileges.
 RUN groupadd -g 1000 cwb && useradd -u 1000 -g 1000 -m -d /home/cwb -s /usr/sbin/nologin cwb \
  && find / -xdev -type f -perm /6000 -exec chmod a-s {} + \
  && test -z "$(find / -xdev -type f -perm /6000)" \
  && test "$(id -g cwb)" = 1000
 ENV HOME=/home/cwb
-# The worker's mirrors and snapshot tars (derived data only). The stack mounts
-# the named volume curate_sync_data here. The folder is made here and owned by
-# uid 1000: a fresh named volume copies that ownership, so the worker can write
-# to it (Docker would otherwise create it as root).
-ENV CWB_SYNC_DIR=/var/lib/cwb
-RUN mkdir -p /var/lib/cwb && chown 1000:1000 /var/lib/cwb
 USER cwb
 
 EXPOSE 8134

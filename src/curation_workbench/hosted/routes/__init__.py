@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, FastAPI
 
-from . import admin, data, decisions, hooks, me, projects, votes
+from . import admin, data, decisions, me, projects, votes
 
 API_PREFIX = "/api/v1"
 
@@ -19,7 +19,6 @@ ROUTERS: list[tuple[APIRouter, str]] = [
     (decisions.router, API_PREFIX),
     (votes.router, API_PREFIX),
     (admin.router, API_PREFIX),
-    (hooks.router, API_PREFIX),
 ]
 
 

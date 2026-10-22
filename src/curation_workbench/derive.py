@@ -2,8 +2,8 @@
 bundle (snapshot.py) plus a decision list.
 
 Generic, trusted code: it reads only the bundle and the decisions, never
-files, and never calls plugin code, so the hosted worker runs it on every
-decision change in milliseconds.
+files, and never calls plugin code, so the website runs it on every
+read after a decision change, in milliseconds.
 
   status(bundle, decisions) -> status.json data
   review(bundle, status, decisions_next_id) -> review.json data, or None when

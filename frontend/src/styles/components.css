@@ -391,6 +391,10 @@ body {
   color: rgb(var(--color-danger));
 }
 
+.repo-error {
+  color: rgb(var(--color-danger));
+}
+
 .badge {
   display: inline-flex;
   align-items: center;

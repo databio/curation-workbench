@@ -4,8 +4,10 @@
 (the subject registry, aliases, lint and plugin findings, every queue signal)
 and returns it as one plain-JSON dict. It is the only place plugin code runs
 during regen; `derive.py` turns a bundle plus a decision list into status.json
-and review.json with no plugin calls. In hosted mode the bundle is built only
-in the isolated runner (`cwb runner`) and stored per commit in Postgres.
+and review.json with no plugin calls. The project repo commits the bundle
+(`cwb regen` writes it to workbench.yaml's `snapshot:` path); the website
+downloads that file from GitHub and stores it per commit, so it never runs
+project code.
 
 Bundle (format `cwb-snapshot/1`):
 
@@ -128,6 +130,11 @@ def files(wb, bundle):
 
 def dumps(bundle):
     return json.dumps(bundle, ensure_ascii=False, separators=(",", ":")) + "\n"
+
+
+def dump(bundle):
+    """The committed snapshot file: indented like status.json, so diffs read."""
+    return json.dumps(bundle, indent=1, ensure_ascii=False) + "\n"
 
 
 def check_format(bundle):

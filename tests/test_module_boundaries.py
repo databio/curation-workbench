@@ -1,5 +1,5 @@
-"""The isolated runner loads no hosted, database or snapgate code, and the
-local CLI loads no SQLAlchemy."""
+"""The local CLI loads no SQLAlchemy, and the hosted site never loads the code
+that imports a project's plugins."""
 import subprocess
 import sys
 
@@ -11,32 +11,6 @@ def loaded_after(code):
              f"print('\\n'.join(m for m in sys.modules if m.startswith({FORBIDDEN!r})))")
     out = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, check=True)
     return [m for m in out.stdout.split() if m]
-
-
-def test_runner_imports_no_hosted_code():
-    assert loaded_after("import curation_workbench.runner as r; r.self_check") == []
-
-
-def test_runner_job_path_imports_no_hosted_code(tmp_path):
-    code = ("from curation_workbench import runner, snapshot, derive, workbench, config, store\n"
-            "runner.classify(ValueError('x'))")
-    assert loaded_after(code) == []
-
-
-def test_runner_source_names_no_hosted_module():
-    import ast
-
-    import curation_workbench.runner as r
-    tree = ast.parse(open(r.__file__).read())
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            names = [a.name for a in node.names]
-        elif isinstance(node, ast.ImportFrom):
-            names = [("." * node.level) + (node.module or "")]
-        else:
-            continue
-        for n in names:
-            assert not n.startswith(FORBIDDEN) and "hosted" not in n, n
 
 
 def test_local_cli_parser_loads_no_sqlalchemy():
@@ -87,5 +61,18 @@ def test_local_cli_help_loads_no_hosted_service_code():
             "    try:\n        cli.main(['hosted', '--help'])\n    except SystemExit:\n        pass")
     loaded = loaded_after(code)
     assert [m for m in loaded if m.startswith(("fastapi", "snapgate", "sqlalchemy"))] == []
-    assert set(loaded) <= {"curation_workbench.hosted", "curation_workbench.hosted.cli",
-                           "curation_workbench.hosted.sync", "curation_workbench.hosted.sync.cli"}
+    assert set(loaded) <= {"curation_workbench.hosted", "curation_workbench.hosted.cli"}
+
+
+def test_hosted_site_never_loads_plugin_code():
+    """The API, its services and the repo poller never load `workbench` (the
+    only module that imports a project's plugins) or the apply engine."""
+    code = ("import warnings\nwarnings.simplefilter('ignore')\n"
+            "import curation_workbench.hosted.app, curation_workbench.hosted.cli\n"
+            "import curation_workbench.hosted.sync.repos, curation_workbench.hosted.service.votes\n"
+            "import sys\nprint('\\n'.join(m for m in sys.modules if m.startswith('curation_workbench')))")
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
+    loaded = set(out.stdout.split())
+    assert "curation_workbench.hosted.app" in loaded
+    assert not loaded & {"curation_workbench.workbench", "curation_workbench.apply",
+                         "curation_workbench.pull", "curation_workbench.handlers"}

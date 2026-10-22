@@ -1,4 +1,4 @@
-"""Superadmin (browser session) admin: projects, teams, read-only residents.
+"""Superadmin (browser session) admin: projects (with their GitHub repo) and teams.
 
 Accounts (approve, suspend) are snapgate's `/auth/admin/*` routes.
 """
@@ -8,7 +8,6 @@ from fastapi import APIRouter, Body, Request, Response
 
 from ..auth import CurrentCaller
 from ..service import projects as svc
-from ..service import roles
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -45,19 +44,11 @@ def remove_member(request: Request, caller: CurrentCaller, slug: str, user_id: i
     return Response(status_code=204)
 
 
-def _resident_caller(caller):
-    from ..sync.residents import Caller as ResidentCaller
-    roles.require_superadmin(caller)
-    return ResidentCaller(is_superadmin=True, user_id=caller.user.id, label=caller.user.email)
+@router.put("/projects/{slug}/repo")
+def set_repo(request: Request, caller: CurrentCaller, slug: str, body: dict = Body(...)) -> dict:
+    return svc.admin_set_repo(request.app.state.engine, caller, slug, body)
 
 
-@router.get("/residents")
-def list_residents(request: Request, caller: CurrentCaller) -> dict:
-    from ..sync import residents
-    return {"residents": residents.list_residents(request.app.state.engine, _resident_caller(caller))}
-
-
-@router.get("/residents/{slug}")
-def show_resident(request: Request, caller: CurrentCaller, slug: str) -> dict:
-    from ..sync import residents
-    return residents.show(request.app.state.engine, _resident_caller(caller), slug)
+@router.post("/projects/{slug}/sync")
+def sync_project(request: Request, caller: CurrentCaller, slug: str) -> dict:
+    return svc.admin_sync_project(request.app.state.engine, caller, slug)

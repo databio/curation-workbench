@@ -34,16 +34,15 @@ to `root`, and `root` is relative to the config file itself.
     plugins: []                  # module names, importable from the config's folder
     plugin_dir: null             # folder holding the plugin modules (and their helper
                                  # modules), relative to this config file. When set,
-                                 # plugins import from there only; required in hosted mode
+                                 # plugins import from there only
+    snapshot: null               # where `cwb regen` / `cwb snapshot` write the snapshot
+                                 # bundle, relative to this config file. The repo commits
+                                 # it; the website reads it (curation/snapshot.json)
     options: {}                  # free-form settings read by generic signals/plugins
-
-Hosted mode (`Workbench.open(..., hosted=True)`) also requires every resolved
-path to stay inside the checkout (`Config.check_contained`).
 
 Everything optional has a default; see DEFAULTS.
 """
 import copy
-import os
 import re
 from pathlib import Path
 
@@ -65,28 +64,18 @@ DEFAULTS = {
     "review_types": None,
     "plugins": [],
     "plugin_dir": None,
+    "snapshot": None,
     "options": {},
 }
 
 
 class ConfigError(Exception):
-    """A workbench.yaml that cannot be used. `code` is `config_invalid` or
-    `path_escape` (a path that leaves the project checkout in hosted mode)."""
+    """A workbench.yaml that cannot be used (`code` is `config_invalid`)."""
 
     def __init__(self, code, message):
         super().__init__(message)
         self.code = code
         self.message = message
-
-
-def _glob_base(pattern):
-    """The part of a glob before its first wildcard component."""
-    parts = []
-    for part in Path(pattern).parts:
-        if any(c in part for c in "*?["):
-            break
-        parts.append(part)
-    return Path(*parts) if parts else Path(".")
 
 
 def _merge(base, over):
@@ -125,6 +114,7 @@ class Config:
         self.out = self.root / d["out"] if d["out"] else self.curation
         self.plugins = list(d["plugins"] or [])
         self.plugin_dir = (self.path.parent / d["plugin_dir"]).resolve() if d["plugin_dir"] else None
+        self.snapshot = (self.path.parent / d["snapshot"]).resolve() if d["snapshot"] else None
         self.options = d["options"] or {}
 
     @classmethod
@@ -139,31 +129,6 @@ class Config:
             return cls(data, path, root=root)
         except (TypeError, ValueError, KeyError) as e:
             raise ConfigError("config_invalid", f"{path}: {type(e).__name__}: {e}") from None
-
-    def check_contained(self, root):
-        """Raise ConfigError("path_escape") unless every path this config uses
-        resolves inside `root`, and no symlink under `root` points outside it."""
-        root = Path(root).resolve()
-        if Path(self.sssom_glob).is_absolute() or ".." in Path(self.sssom_glob).parts:
-            raise ConfigError("path_escape", f"mappings.sssom {self.sssom_glob!r} leaves the checkout")
-        machine = self.options.get("machine_definitions")
-        paths = {
-            "the config file": self.path, "root": self.root, "schema.dir": self.schema_dir,
-            "schema.root": self.schema_root, "terms.ledger": self.ledger,
-            "curation.dir": self.curation, "review_types": self.review_types, "out": self.out,
-            "mappings.sssom": self.root / _glob_base(self.sssom_glob),
-            "plugin_dir": self.plugin_dir,
-            "options.machine_definitions": self.root / machine if machine else None,
-        }
-        for name, p in paths.items():
-            if p is not None and not Path(p).resolve().is_relative_to(root):
-                raise ConfigError("path_escape", f"{name} ({p}) leaves the checkout {root}")
-        for dirpath, dirnames, filenames in os.walk(root):
-            for name in dirnames + filenames:
-                p = Path(dirpath) / name
-                if p.is_symlink() and not p.resolve().is_relative_to(root):
-                    raise ConfigError("path_escape",
-                                      f"{p.relative_to(root)} is a symlink that leaves the checkout")
 
     # ---- term ids
     @property

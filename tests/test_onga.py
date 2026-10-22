@@ -13,9 +13,26 @@ from curation_workbench import apply, cli, store
 from curation_workbench.workbench import Workbench
 
 
-@pytest.mark.parametrize("cmd", ["subjects", "lint", "status", "review"])
+@pytest.mark.parametrize("cmd", ["subjects", "lint", "status", "review", "snapshot"])
 def test_committed_outputs_are_current(onga, cmd, capsys):
     assert cli.main(["-c", str(onga / "workbench.yaml"), cmd, "--check"]) == 0, capsys.readouterr().out
+
+
+def test_site_review_from_the_committed_snapshot(onga):
+    """What the website shows: its derive over ONGA's committed snapshot file,
+    with no hosted decisions, gives the same review as ONGA's committed
+    review.json (only the next decision id differs: H- on the site, DEC- here)."""
+    from curation_workbench import derive, snapshot
+    from curation_workbench.config import Config
+    cfg = Config.load(onga / "workbench.yaml")
+    bundle = snapshot.check_format(json.loads(cfg.snapshot.read_text()))
+    st = derive.status(bundle, derive.merge_decisions(bundle["repo_decisions"], []))
+    site = derive.review(bundle, st, "H-0001")
+    committed = json.loads((cfg.out / "review.json").read_text())
+    assert site["decisions_next_id"] == "H-0001"
+    assert {k: v for k, v in site.items() if k != "decisions_next_id"} == \
+        {k: v for k, v in committed.items() if k != "decisions_next_id"}
+    assert st == json.loads((cfg.out / "status.json").read_text())
 
 
 def test_decisions_validate(onga):

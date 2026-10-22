@@ -16,8 +16,8 @@ own decisions are never touched. Every mark and clear writes one
 `cw_stale_events` row; nothing is ever deleted. Marks are written through the
 store (`set_stale` / `clear_stale`), which never bumps `decisions_rev`.
 
-The pass is idempotent (it writes only when a row's mark changes), so the
-worker runs it in full on every publish and every derive.
+The pass is idempotent (it writes only when a row's mark changes), so it runs
+in full on every publish and after every vote or decision write.
 """
 from __future__ import annotations
 
@@ -46,7 +46,7 @@ def _decision_verdict(hashes, subjects, aliases):
     return None, None
 
 
-def run_pass(store, conn, resident_id, snapshot_id, bundle):
+def run_pass(store, conn, project_id, snapshot_id, bundle):
     """Mark and clear stale votes and pending decisions against `bundle`.
     `store` is a PgStore bound to `conn` (its `using(conn)` or `transaction()`).
     Returns {"marked": n, "cleared": n}."""
@@ -77,5 +77,5 @@ def run_pass(store, conn, resident_id, snapshot_id, bundle):
         apply("decision", d, sid, verdict)
     if events:
         conn.execute(cw_stale_events.insert(), [
-            {"resident_id": resident_id, "snapshot_id": snapshot_id, **e} for e in events])
+            {"project_id": project_id, "snapshot_id": snapshot_id, **e} for e in events])
     return counts

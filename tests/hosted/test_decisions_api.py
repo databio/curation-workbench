@@ -20,14 +20,14 @@ def test_create_update_withdraw(client, h, toy_hash, team):
     body = decision_body(toy_hash)
     body.update(id="DEC-9999", decided_by="mallory", status="applied", origin={"kind": "local"},
                 schema_fingerprint="bogus", decided_on="1999-01-01", applied={"on": "x"}, rev=7,
-                vote_ids=[1], stale=True, plugin_errors=["x"], decided_by_user_id=99)
+                vote_ids=[1], stale=True, decided_by_user_id=99)
     r = client.post(T, json=body, headers=h)
     assert r.status_code == 201, r.text
     d = r.json()["decision"]
     assert d["id"] == "H-0001" and d["origin"] == {"kind": "hosted", "ref": "H-0001"}
     assert d["decided_by"] == "Cora Curator <cur@example.org>" and d["status"] == "pending"
     assert d["decided_on"] != "1999-01-01" and d["schema_fingerprint"] != "bogus"
-    assert d["rev"] == 1 and d["vote_ids"] == [] and d["stale"] is False and d["plugin_errors"] == []
+    assert d["rev"] == 1 and d["vote_ids"] == [] and d["stale"] is False
     assert "decided_by_user_id" not in d
     d2 = client.post(T, json=decision_body(toy_hash, "term:TOY_0002"), headers=h).json()["decision"]
     assert d2["id"] == "H-0002"
@@ -55,7 +55,7 @@ def test_create_update_withdraw(client, h, toy_hash, team):
 
     exp = client.get(T + "/export", headers=h).json()["decisions"]
     assert [x["id"] for x in exp] == ["H-0002"]
-    assert not {"rev", "vote_ids", "stale", "stale_reason", "stale_new_sid", "plugin_errors"} & set(exp[0])
+    assert not {"rev", "vote_ids", "stale", "stale_reason", "stale_new_sid"} & set(exp[0])
     assert exp[0]["decided_on"].count("-") == 2
 
 

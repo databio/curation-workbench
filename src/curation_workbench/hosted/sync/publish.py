@@ -1,12 +1,13 @@
-"""Publishing a snapshot, and writing the derived status/review.
+"""Publishing a snapshot, and the staleness pass after each write.
 
 `publish_snapshot` is one transaction: insert (or reuse) the `cw_snapshots`
-row, mark hosted decisions that reached the repo as applied (`mark_landed`),
-run the staleness pass, derive status and review from the bundle plus
-the merged decision list, write `cw_derived` with the `decisions_rev` read in
-the same transaction, and make the snapshot current. A failure leaves the
-last good snapshot live. Plan 2's dev stand-in (`cwb hosted admin
-dev-snapshot`) calls the same function, so dev and production publish alike.
+row for the commit, mark hosted decisions that reached the repo as applied
+(`mark_landed`), run the staleness pass, and make the snapshot current. A
+failure leaves the last good snapshot live. Status and review are not stored:
+`project_data` derives them on read from the bundle and the decisions.
+
+`refresh_stale(conn, project_id)` runs the staleness pass against the current
+snapshot; the vote and decision services call it in each write's transaction.
 """
 from __future__ import annotations
 
@@ -14,16 +15,20 @@ import datetime
 import gzip
 import hashlib
 import json
+import threading
+from collections import OrderedDict
 
 from sqlalchemy import func, select, update
-from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-from ... import derive
 from ...snapshot import check_format
 from ...store.landing import landed_refs
 from ...store.pg import PgStore
-from . import jobs, stale
-from .tables import cw_derived, cw_residents, cw_snapshots
+from . import stale
+from .tables import cw_repos, cw_snapshots
+
+_CACHE_SIZE = 8
+_cache: OrderedDict[int, dict] = OrderedDict()
+_lock = threading.Lock()
 
 
 def encode_bundle(bundle):
@@ -35,28 +40,31 @@ def decode_bundle(data):
     return json.loads(gzip.decompress(data))
 
 
-def find_snapshot(conn, resident_id, commit_sha, plugin_tree_used):
-    q = select(cw_snapshots.c.id).where(cw_snapshots.c.resident_id == resident_id,
-                                        cw_snapshots.c.commit_sha == commit_sha)
-    q = q.where(cw_snapshots.c.plugin_tree_used.is_(None) if plugin_tree_used is None
-                else cw_snapshots.c.plugin_tree_used == plugin_tree_used)
-    return conn.execute(q).scalar_one_or_none()
-
-
 def load_bundle(conn, snapshot_id):
-    data = conn.execute(select(cw_snapshots.c.bundle)
-                        .where(cw_snapshots.c.id == snapshot_id)).scalar_one()
-    return decode_bundle(data)
+    """The bundle of one snapshot, cached in process memory (snapshots never change)."""
+    with _lock:
+        hit = _cache.get(snapshot_id)
+        if hit is not None:
+            _cache.move_to_end(snapshot_id)
+            return hit
+    bundle = decode_bundle(conn.execute(select(cw_snapshots.c.bundle)
+                                        .where(cw_snapshots.c.id == snapshot_id)).scalar_one())
+    with _lock:
+        _cache[snapshot_id] = bundle
+        while len(_cache) > _CACHE_SIZE:
+            _cache.popitem(last=False)
+    return bundle
 
 
-def _resident(conn, resident_id, lock=False):
-    q = select(cw_residents).where(cw_residents.c.id == resident_id)
-    if lock:
-        q = q.with_for_update()
-    row = conn.execute(q).one_or_none()
-    if row is None:
-        raise LookupError(f"no resident {resident_id}")
-    return row
+def clear_cache():
+    with _lock:
+        _cache.clear()
+
+
+def find_snapshot(conn, project_id, commit_sha):
+    return conn.execute(select(cw_snapshots.c.id).where(
+        cw_snapshots.c.project_id == project_id,
+        cw_snapshots.c.commit_sha == commit_sha)).scalar_one_or_none()
 
 
 def mark_landed(store, bundle, commit_sha):
@@ -85,47 +93,40 @@ def mark_landed(store, bundle, commit_sha):
     return sorted(stamps)
 
 
-def write_derived(conn, store, resident_id, snapshot_id, bundle, *, new_snapshot=False):
-    """Derive status and review from `bundle` and the merged decisions and
-    overwrite the resident's `cw_derived` row. `store` is bound to `conn`."""
-    hosted = store.records()
-    decisions = derive.merge_decisions(bundle.get("repo_decisions") or [], hosted)
-    st = derive.status(bundle, decisions)
-    rv = derive.review(bundle, st, f"H-{int(store.snapshot()['next_id']):04d}")
-    rev = store.decisions_rev()
-    values = {"snapshot_id": snapshot_id, "decisions_version": rev, "status": st, "review": rv,
-              "computed_at": func.now()}
-    insert_values = {**values, "decision_checks": {}}
-    stmt = pg_insert(cw_derived).values(resident_id=resident_id, **insert_values)
-    if new_snapshot:
-        values = {**values, "decision_checks": {}, "checks_decisions_version": None}
-    conn.execute(stmt.on_conflict_do_update(index_elements=[cw_derived.c.resident_id], set_=values))
-    return rev
-
-
-def publish_snapshot(conn, resident_id, bundle, commit_sha, plugin_tree_used=None, *,
-                     plugin_tree_at_commit=None, commit_time=None):
+def publish_snapshot(conn, project_id, bundle, commit_sha):
     """Store and publish one snapshot in the caller's transaction (`conn`).
-    Reuses the row when (resident, commit, plugin tree) already has one.
-    Returns the snapshot id."""
+    The project needs a `cw_repos` row. Reuses the row when the commit already
+    has one. Returns the snapshot id."""
     check_format(bundle)
-    res = _resident(conn, resident_id, lock=True)
-    sid = find_snapshot(conn, resident_id, commit_sha, plugin_tree_used)
+    conn.execute(select(cw_repos.c.project_id).where(cw_repos.c.project_id == project_id)
+                 .with_for_update()).scalar_one()
+    sid = find_snapshot(conn, project_id, commit_sha)
     if sid is None:
         data, digest = encode_bundle(bundle)
         sid = conn.execute(cw_snapshots.insert().values(
-            resident_id=resident_id, commit_sha=commit_sha, commit_time=commit_time,
-            schema_fingerprint=bundle["schema_fingerprint"], plugin_tree_used=plugin_tree_used,
-            plugin_tree_at_commit=plugin_tree_at_commit, bundle=data, bundle_sha256=digest,
+            project_id=project_id, commit_sha=commit_sha,
+            schema_fingerprint=bundle["schema_fingerprint"], bundle=data, bundle_sha256=digest,
             warnings=list(bundle.get("warnings") or [])).returning(cw_snapshots.c.id)).scalar_one()
-    store = PgStore(conn.engine, res.project_id)
+    store = PgStore(conn.engine, project_id)
     with store.using(conn):
         mark_landed(store, bundle, commit_sha)
-        stale.run_pass(store, conn, resident_id, sid, bundle)
-        write_derived(conn, store, resident_id, sid, bundle,
-                      new_snapshot=res.current_snapshot_id != sid)
-    conn.execute(update(cw_residents).where(cw_residents.c.id == resident_id).values(
+        stale.run_pass(store, conn, project_id, sid, bundle)
+    conn.execute(update(cw_repos).where(cw_repos.c.project_id == project_id).values(
         current_snapshot_id=sid, last_error=None, updated_at=func.now()))
-    if bundle.get("decision_hooks") and not str(res.repo_url).startswith("dev:"):
-        jobs.enqueue(conn, resident_id, "checks", "manual")
     return sid
+
+
+def refresh_stale(conn, project_id):
+    """The staleness pass against the project's current snapshot, in the
+    caller's transaction. A no-op before the first snapshot."""
+    sid = conn.execute(select(cw_repos.c.current_snapshot_id)
+                       .where(cw_repos.c.project_id == project_id)).scalar_one_or_none()
+    if sid is None:
+        return None
+    store = PgStore(conn.engine, project_id)
+    with store.using(conn):
+        return stale.run_pass(store, conn, project_id, sid, load_bundle(conn, sid))
+
+
+__all__ = ["clear_cache", "decode_bundle", "encode_bundle", "find_snapshot", "load_bundle",
+           "mark_landed", "publish_snapshot", "refresh_stale"]

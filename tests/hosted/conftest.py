@@ -45,7 +45,6 @@ def isolate_env(monkeypatch, tmp_path) -> None:
             monkeypatch.delenv(key)
     monkeypatch.setenv("CWB_ENV", "test")
     monkeypatch.setenv("CWB_FRONTEND_DIST", str(tmp_path / "no-frontend"))
-    monkeypatch.setenv("CWB_SYNC_DIR", str(tmp_path / "sync"))
     monkeypatch.setenv("SNAPGATE_SUPERADMIN_EMAILS", ADMIN_EMAIL)
     monkeypatch.setenv("SNAPGATE_ADMIN_EMAILS", SITE_ADMIN_EMAIL)
     monkeypatch.setattr(sg_settings, "SNAPGATE_SUPERADMIN_EMAILS", ADMIN_EMAIL)

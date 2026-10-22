@@ -10,7 +10,7 @@ Adapted from Pigeon's `migrate.py`.
   the registered tables need but the database lacks (this package's
   `tables.METADATA` plus any `extra_metadata` the caller passes).
 * `assert_schema_current` raises when anything is pending, unknown or missing.
-  The hosted app and the sync worker call it at start-up; `cwb db status` is
+  The hosted app calls it at start-up; `cwb db status` is
   the same check from the command line.
 * `misowned_objects` lists tables/sequences the connecting role does not own.
   `migrate` refuses to apply anything while that list is non-empty.
@@ -32,7 +32,7 @@ Migration numbers (one directory, `deployment/migrations/`; one runner, this one
   | 010-019 | plan 1 | 010_projects.sql, 011_decisions.sql, 012_votes.sql, 013_decision_votes.sql |
   | 020-029 | plan 2 | 020_project_members.sql, 021_question_resolutions.sql, 022_user_fks.sql |
   | 030-039 | free   | |
-  | 040-049 | plan 4 | 040_residents_sync.sql (cw_residents, cw_plugin_approvals, cw_snapshots, cw_derived, cw_sync_jobs, cw_stale_events, and the FKs from 011/012's stale_since_snapshot_id to cw_snapshots) |
+  | 040-049 | repos  | 040_residents_sync.sql (superseded), 041_repo_snapshots.sql (cw_repos, cw_snapshots, cw_stale_events, and the FKs from 011/012's stale_since_snapshot_id to cw_snapshots) |
   | 090-099 | plan 2 | 090_snapgate_useradmin.sql (byte copy of snapgate's sql/useradmin.sql) |
 
 The anchor file is `010_projects.sql` (it only proves "right directory").

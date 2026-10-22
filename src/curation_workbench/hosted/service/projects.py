@@ -13,6 +13,7 @@ from ...store import StoreError
 from ...store.pg import projects as pg_projects
 from ...store.pg.tables import decisions, projects
 from .. import project_data
+from ..sync import repos
 from ..tables import project_members
 from . import roles
 from .errors import AccountNotApproved, BadRequest
@@ -90,7 +91,9 @@ def team(engine, caller: Caller, slug: str) -> dict:
 def _admin_row(conn, p) -> dict:
     info = project_data.sync_info(conn, p["id"])
     return {"slug": p["slug"], "name": p["name"], "archived_at": p["archived_at"],
-            "created_at": p["created_at"], "commit": info["commit"], "synced_at": info["synced_at"],
+            "created_at": p["created_at"], "repo": info["repo"], "branch": info["branch"],
+            "commit": info["commit"], "synced_at": info["synced_at"],
+            "last_checked_at": info["last_checked_at"], "last_error": info["last_error"],
             "members": len(roles.active_members(conn, p["id"]))}
 
 
@@ -110,11 +113,47 @@ def _body_str(body, key):
     return v
 
 
-def admin_create_project(engine, caller, body) -> dict:
+def admin_create_project(engine, caller, body, *, gh=None) -> dict:
+    """Create a project. With `repo` (a public GitHub repo) and optional
+    `branch` (default master), also register the repo and load its snapshot."""
     roles.require_superadmin(caller)
-    p = pg_projects.create_project(engine, _body_str(body, "slug"), _body_str(body, "name"))
+    slug, name = _body_str(body, "slug"), _body_str(body, "name")
+    repo = body.get("repo")
+    if repo:
+        if not isinstance(repo, str):
+            raise BadRequest("repo must be a string")
+        branch = body.get("branch") or "master"
+        if not isinstance(branch, str):
+            raise BadRequest("branch must be a string")
+        if pg_projects.get_project(engine, slug) is not None:
+            raise StoreError(409, [f"project {slug} already exists"])
+        out = repos.register(engine, caller, slug, name, repo, branch, gh=gh)
+        p = out["project"]
+    else:
+        p = pg_projects.create_project(engine, slug, name)
     with engine.connect() as conn:
         return {"project": _admin_row(conn, p)}
+
+
+def admin_set_repo(engine, caller, slug, body, *, gh=None) -> dict:
+    """Set (or change) a project's GitHub repo and branch, then load its snapshot."""
+    roles.require_superadmin(caller)
+    p = pg_projects.get_project(engine, slug)
+    if p is None:
+        raise StoreError(404, [f"no project {slug}"])
+    repo = _body_str(body, "repo")
+    repos.register(engine, caller, slug, p["name"], repo, body.get("branch") or "master", gh=gh)
+    with engine.connect() as conn:
+        return {"project": _admin_row(conn, p)}
+
+
+def admin_sync_project(engine, caller, slug, *, gh=None) -> dict:
+    """Fetch the project's snapshot from GitHub now."""
+    roles.require_superadmin(caller)
+    result = repos.sync_project(engine, slug, gh=gh)
+    p = pg_projects.get_project(engine, slug)
+    with engine.connect() as conn:
+        return {"project": _admin_row(conn, p), "fetch": result}
 
 
 def admin_rename_project(engine, caller, slug, body) -> dict:
@@ -186,5 +225,5 @@ def user_id_for_email(engine, email: str) -> int:
 
 
 __all__ = ["admin_archive_project", "admin_create_project", "admin_list_projects",
-           "admin_rename_project", "list_projects", "me", "project_detail", "remove_member",
+           "admin_rename_project", "admin_set_repo", "admin_sync_project", "list_projects", "me", "project_detail", "remove_member",
            "set_member", "team", "user_id_for_email"]

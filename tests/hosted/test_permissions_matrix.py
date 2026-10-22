@@ -54,8 +54,7 @@ def routes(h, uid):
         ("admin", "PATCH", "/api/v1/admin/projects/other", {"name": "Other 2"}, {}),
         ("admin", "PUT", f"/api/v1/admin/projects/toy/team/{uid}", {"role": "voter"}, {}),
         ("admin", "DELETE", f"/api/v1/admin/projects/toy/team/{uid}", None, {}),
-        ("admin", "GET", "/api/v1/admin/residents", None, {}),
-        ("admin", "GET", "/api/v1/admin/residents/toy", None, {}),
+        ("admin", "POST", "/api/v1/admin/projects/toy/sync", None, {}),
         ("admin", "DELETE", "/api/v1/admin/projects/other", None, {}),
     ]
 

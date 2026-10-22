@@ -215,3 +215,41 @@ export async function listHostedProjects(fetchImpl?: FetchImpl): Promise<HostedP
   const { request } = createHostedClient(fetchImpl);
   return (await request<{ projects: HostedProject[] }>('GET', '/api/v1/projects')).projects;
 }
+
+/** One project as a superadmin sees it (`GET /api/v1/admin/projects`). */
+export interface AdminProject {
+  slug: string;
+  name: string;
+  archived_at: string | null;
+  repo: string | null;
+  branch: string | null;
+  commit: string | null;
+  synced_at: string | null;
+  last_checked_at: string | null;
+  last_error: string | null;
+  members: number;
+}
+
+export interface NewProject {
+  slug: string;
+  name: string;
+  repo: string;
+  branch: string;
+}
+
+export async function adminListProjects(fetchImpl?: FetchImpl): Promise<AdminProject[]> {
+  const { request } = createHostedClient(fetchImpl);
+  return (await request<{ projects: AdminProject[] }>('GET', '/api/v1/admin/projects')).projects;
+}
+
+/** Register a project with its public GitHub repo; the server loads its snapshot. */
+export async function adminCreateProject(p: NewProject, fetchImpl?: FetchImpl): Promise<AdminProject> {
+  const { request } = createHostedClient(fetchImpl);
+  return (await request<{ project: AdminProject }>('POST', '/api/v1/admin/projects', p)).project;
+}
+
+/** Fetch a project's snapshot from GitHub now. */
+export async function adminSyncProject(slug: string, fetchImpl?: FetchImpl): Promise<AdminProject> {
+  const { request } = createHostedClient(fetchImpl);
+  return (await request<{ project: AdminProject }>('POST', `/api/v1/admin/projects/${encodeURIComponent(slug)}/sync`)).project;
+}

@@ -4,7 +4,8 @@ The server owns `SERVER_FIELDS`; the client cannot set them. It sets `decided_by
 `decided_by_user_id`, `decided_on` today, `schema_fingerprint` from the
 current snapshot and `status: pending`; `PgStore.create` mints the `H-` id
 and sets `origin: {kind: hosted, ref: <id>}`. Updates and withdrawals need
-`If-Match: <rev>` (else 428). Every write asks plan 4's worker to re-derive.
+`If-Match: <rev>` (else 428). Every write runs the staleness pass
+(`sync.publish.refresh_stale`); status and review are derived on read.
 """
 from __future__ import annotations
 
@@ -14,16 +15,15 @@ from snapgate import Caller
 
 from ...store.pg import PgStore
 from ...store.pg.store import INTERNAL_KEYS
-from ..sync import request_derive
 from .. import project_data
+from ..sync.publish import refresh_stale
 from . import roles
-from .data import with_plugin_errors
-from .errors import BadRequest, NotSynced, PreconditionRequired
+from .errors import BadRequest, PreconditionRequired
 
 #: Fields only the server sets.
 SERVER_FIELDS = ("id", "decided_by", "decided_on", "schema_fingerprint", "status", "applied", "origin")
 #: Keys a client may send back from a read that are never stored.
-READ_ONLY_KEYS = (*INTERNAL_KEYS, "plugin_errors")
+READ_ONLY_KEYS = INTERNAL_KEYS
 
 
 def decided_by(caller: Caller) -> str:
@@ -55,21 +55,13 @@ def parse_if_match(value) -> int:
         raise BadRequest(f"If-Match must be the decision's rev (an integer), got {value!r}") from None
 
 
-def _checks(conn, project):
-    try:
-        return project_data.load_for(conn, project).decision_checks
-    except NotSynced:
-        return {}
-
-
 def list_decisions(engine, caller: Caller, slug: str, status: str | None = None) -> dict:
     with engine.connect() as conn:
         project, _ = roles.access(conn, caller, slug)
-        checks = _checks(conn, project)
         store = PgStore(engine, project["id"])
         with store.using(conn):
             snap = store.snapshot()
-    recs = with_plugin_errors(snap["decisions"], checks)
+    recs = snap["decisions"]
     if status:
         recs = [r for r in recs if r.get("status") == status]
     return {"version": snap["version"], "next_id": f"H-{int(snap['next_id']):04d}",
@@ -79,11 +71,10 @@ def list_decisions(engine, caller: Caller, slug: str, status: str | None = None)
 def get_decision(engine, caller: Caller, slug: str, dec_id: str) -> dict:
     with engine.connect() as conn:
         project, _ = roles.access(conn, caller, slug)
-        checks = _checks(conn, project)
         store = PgStore(engine, project["id"])
         with store.using(conn):
             rec = store.get(dec_id)
-    return {"decision": with_plugin_errors([rec], checks)[0]}
+    return {"decision": rec}
 
 
 def _for_write(engine, caller, slug):
@@ -100,8 +91,8 @@ def create(engine, caller: Caller, slug: str, body) -> dict:
     store = PgStore(engine, project["id"])
     with store.transaction() as conn:
         out = store.create(rec, project_data.context(pd), decided_by_user_id=caller.user.id)
-        request_derive(conn, project["id"])
-    return {"decision": with_plugin_errors([out], {})[0]}
+        refresh_stale(conn, project["id"])
+    return {"decision": out}
 
 
 def update(engine, caller: Caller, slug: str, dec_id: str, body, if_match) -> dict:
@@ -114,20 +105,19 @@ def update(engine, caller: Caller, slug: str, dec_id: str, body, if_match) -> di
     with store.transaction() as conn:
         out = store.update(dec_id, rec, project_data.context(pd), expect_rev=rev,
                            decided_by_user_id=caller.user.id)
-        request_derive(conn, project["id"])
-    return {"decision": with_plugin_errors([out], pd.decision_checks)[0]}
+        refresh_stale(conn, project["id"])
+    return {"decision": out}
 
 
 def withdraw(engine, caller: Caller, slug: str, dec_id: str, if_match) -> dict:
     rev = parse_if_match(if_match)
     with engine.connect() as conn:
         project, _ = roles.access(conn, caller, slug, need="curator")
-        checks = _checks(conn, project)
     store = PgStore(engine, project["id"])
     with store.transaction() as conn:
         out = store.withdraw(dec_id, expect_rev=rev)
-        request_derive(conn, project["id"])
-    return {"decision": with_plugin_errors([out], checks)[0]}
+        refresh_stale(conn, project["id"])
+    return {"decision": out}
 
 
 STALE_WORDS = {"subject_changed": "the item changed since it was decided",
@@ -138,14 +128,13 @@ STALE_WORDS = {"subject_changed": "the item changed since it was decided",
 def export(engine, caller: Caller, slug: str) -> dict:
     """What `cwb pull` applies: approved (pending) hosted decisions as plain
     records (no rev, vote links or stale marks; dates as YYYY-MM-DD), oldest
-    first. Decisions that are stale or fail the worker's plugin checks are
-    held back and listed in `held` ({id, reason}) instead. `commit` is the
-    commit the site last synced. Renumbering into the repo's DEC- sequence
+    first. Stale decisions are held back and listed in `held` ({id, reason})
+    instead; the project's own checks run when `cwb pull` applies the rest.
+    `commit` is the commit the site last loaded. Renumbering into the repo's DEC- sequence
     happens on the repo side (`store.landing.append_hosted`)."""
     with engine.connect() as conn:
         project, _ = roles.access(conn, caller, slug)
         info = project_data.sync_info(conn, project["id"])
-        checks = _checks(conn, project)
         store = PgStore(engine, project["id"])
         with store.using(conn):
             recs = store.records()
@@ -153,12 +142,9 @@ def export(engine, caller: Caller, slug: str) -> dict:
     for r in recs:
         if r.get("status") != "pending":
             continue
-        errs = list((checks or {}).get(r["id"]) or [])
         if r.get("stale"):
             held.append({"id": r["id"], "reason": STALE_WORDS.get(r.get("stale_reason"),
                                                                   "the item changed since it was decided")})
-        elif errs:
-            held.append({"id": r["id"], "reason": "fails the project's checks: " + "; ".join(errs)})
         else:
             out.append({k: v for k, v in r.items() if k not in READ_ONLY_KEYS})
     return {"decisions": out, "held": held, "commit": info["commit"]}

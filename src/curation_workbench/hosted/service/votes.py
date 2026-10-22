@@ -6,7 +6,7 @@ page). Each team member has at most one vote per question. Content checks are
 plan 1's `validate_vote` (inside `PgStore.cast_vote`); this module only adds
 the rules that need the team or the question's state:
 
-- a vote marked stale by plan 4's worker is shown but not counted; voting
+- a vote marked stale (the subject changed in a newer snapshot) is shown but not counted; voting
   again clears the mark;
 - votes of former members (removed from the team) are shown with
   `former_member: true` and not counted;
@@ -15,7 +15,7 @@ the rules that need the team or the question's state:
 - votes never become decisions on their own: a curator resolves the question
   (`resolve`), with a decision (from a vote's proposal or a full record) or
   with no action, in one transaction;
-- every write asks plan 4's worker to re-derive (`request_derive`).
+- every write runs the staleness pass (`sync.publish.refresh_stale`).
 """
 from __future__ import annotations
 
@@ -26,8 +26,8 @@ from ...store import StoreError
 from ...store.pg import PgStore
 from ...store.pg.tables import decisions, projects
 from ...store.validate import _review_type_kinds
-from ..sync import request_derive
 from .. import project_data
+from ..sync.publish import refresh_stale
 from ..tables import question_resolutions
 from . import roles
 from .decisions import client_record, decided_by
@@ -202,7 +202,7 @@ def cast(engine, caller: Caller, slug: str, body) -> dict:
         if isinstance(vote.get("subject"), str) and isinstance(vote.get("review_type"), str):
             _require_open(conn, project["id"], vote["subject"], vote["review_type"])
         v = store.cast_vote(vote, project_data.context(pd), user_id=caller.user.id)
-        request_derive(conn, project["id"])
+        refresh_stale(conn, project["id"])
         members = roles.active_members(conn, project["id"])
         names = _names(conn, [v["user_id"]])
     return {"vote": vote_out(v, names, members)}
@@ -216,7 +216,7 @@ def retract(engine, caller: Caller, slug: str, sid: str, review_type: str) -> No
         _lock_project(conn, project["id"])
         _require_open(conn, project["id"], sid, review_type)
         store.retract_vote(sid, review_type, user_id=caller.user.id)
-        request_derive(conn, project["id"])
+        refresh_stale(conn, project["id"])
 
 
 def _check_question(pd, sid, review_type):
@@ -317,10 +317,8 @@ def resolve(engine, caller: Caller, slug: str, body) -> dict:
         conn.execute(question_resolutions.insert().values(
             project_id=pid, subject=sid, review_type=review_type, state="resolved",
             outcome=outcome, decision_id=decision_row, resolved_by=caller.user.id, note=note))
-        request_derive(conn, pid)
+        refresh_stale(conn, pid)
         question = _question_out(conn, pid, caller.user.id, sid, review_type)
-    if out is not None:
-        out = {**out, "plugin_errors": []}
     return {"question": question, "decision": out}
 
 
@@ -344,7 +342,7 @@ def reopen(engine, caller: Caller, slug: str, body) -> dict:
         conn.execute(question_resolutions.insert().values(
             project_id=pid, subject=sid, review_type=review_type, state="reopened",
             outcome=None, decision_id=None, resolved_by=caller.user.id, note=body.get("note") or ""))
-        request_derive(conn, pid)
+        refresh_stale(conn, pid)
         question = _question_out(conn, pid, caller.user.id, sid, review_type)
     return {"question": question}
 

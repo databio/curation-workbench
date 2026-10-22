@@ -1,6 +1,6 @@
 """Read routes return exactly `views.<fn>(...)` of the published data; the
 Approved page's body; and hosted decisions that reach the repo get marked
-applied on the next sync."""
+applied when the next snapshot shows them in the repo."""
 import json
 
 import pytest
@@ -64,7 +64,7 @@ def test_routes_equal_views(client, engine, curator, toy_root):
     r = client.get(T + "/pending", headers=curator).json()
     assert r["decisions"] == [] and r["applied"] == []           # repo decisions are not hosted ones
     assert r["errors"] == {} and r["ok"] is True
-    assert r["repository"]["url"] is None and r["repository"]["workflow_url"] is None   # a dev: resident
+    assert r["repository"]["url"] is None and r["repository"]["workflow_url"] is None   # a dev: repo
     assert r["repository"]["commit"] == pd.commit
     assert "files" not in r
     assert client.get(T + "/subject?sid=term:NOPE", headers=curator).status_code == 404
@@ -87,7 +87,7 @@ def test_hosted_decisions_in_history_and_pending(client, curator, toy_hash):
     r = client.post(T + "/decisions", json=decision_body(toy_hash), headers=curator)
     assert r.status_code == 201
     hist = client.get(T + "/history", headers=curator).json()["history"]
-    assert [h["id"] for h in hist] == ["H-0001"] and hist[0]["plugin_errors"] == []
+    assert [h["id"] for h in hist] == ["H-0001"]
     pend = client.get(T + "/pending", headers=curator).json()
     assert [d["id"] for d in pend["decisions"]] == ["H-0001"] and pend["decisions"][0]["effects"] is None
     subj = client.get(T + "/subject?sid=term:TOY_0001", headers=curator).json()
@@ -95,7 +95,7 @@ def test_hosted_decisions_in_history_and_pending(client, curator, toy_hash):
 
 
 def test_landed_decisions_are_marked_applied(client, engine, curator, toy_hash, toy_root):
-    """`cwb pull` lands H-0001 in the repo as DEC-0001; the next sync marks it
+    """`cwb pull` lands H-0001 in the repo as DEC-0001; the next snapshot marks it
     applied, the Approved page moves it to `applied`, and export stops sending it."""
     for sid in ("term:TOY_0001", "term:TOY_0002"):
         assert client.post(T + "/decisions", json=decision_body(toy_hash, sid=sid),

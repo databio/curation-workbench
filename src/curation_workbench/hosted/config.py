@@ -32,6 +32,15 @@ class Settings(BaseSettings):
     rate_limits: bool = True
     #: Header carrying the real client IP (production: `CF-Connecting-IP`).
     client_ip_header: str | None = None
+    #: Seconds between checks of each project's GitHub repo for a new commit
+    #: (`CWB_FETCH_SECONDS`). Unset: 300 in production, off (0) otherwise.
+    fetch_seconds: int | None = None
+
+    @property
+    def fetch_interval(self) -> int:
+        if self.fetch_seconds is not None:
+            return max(0, self.fetch_seconds)
+        return 300 if self.production else 0
 
     @property
     def production(self) -> bool:

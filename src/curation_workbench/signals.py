@@ -55,7 +55,7 @@ def adoption(ctx):
                 todo += [f"class:{r}", f"enum:{r}"]
         elif s["kind"] == "enum":
             todo += s.get("members") or []
-    return {sid: 1 for sid in reach}
+    return {sid: 1 for sid in sorted(reach)}
 
 
 def term_usage(wb):
@@ -118,7 +118,7 @@ def ported(ctx):
     modules = {subjects[sid]["module"] for sid in classes}
     found = classes | {sid for sid, s in subjects.items()
                        if s["kind"] in ("slot", "enum") and s["module"] in modules}
-    return {sid: 1 for sid in found}
+    return {sid: 1 for sid in sorted(found)}
 
 
 def machine(ctx):

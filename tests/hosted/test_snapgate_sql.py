@@ -27,4 +27,4 @@ def test_migrations_cover_snapgate_and_hosted_tables(engine):
     migrate.assert_schema_current(engine, cli._extra_metadata())
     names = {t.name for m in cli._extra_metadata() for t in m.sorted_tables}
     assert {"snapgate_users", "api_keys", "snapgate_login_events", "project_members",
-            "question_resolutions", "cw_residents"} <= names
+            "question_resolutions", "cw_repos", "cw_snapshots"} <= names
